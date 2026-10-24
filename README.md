@@ -24,6 +24,54 @@ The interface recreates Photoshop Express's layout and flow with original
 artwork — no Adobe code, assets or logos. PhotoCraft Express is **not
 affiliated with or endorsed by storytold/ArtCraft or Adobe Inc.**
 
+## What changed in v0.2.1 (fidelity polish)
+
+- **Adjustments panel, restructured to Express 1:1** — a mask selector
+  row on top (Full / Subject / Background, each with a small thumbnail:
+  Subject dims the background around the person, Background dims the
+  person), a horizontal strip of per-adjustment live thumbnails (tap one
+  to select it), and one main slider for the selected adjustment. Tabs
+  are exactly ADJUSTMENTS / SPLIT TONE / COLOR MIX / BLUR / VIGNETTE /
+  OPTICS; OPTICS shows a plain "Lens profile unavailable" state, matching
+  what Express itself shows for photos without a lens profile. Subject
+  and Background use the on-device person mask (ML Kit Selfie
+  Segmentation, already bundled); with no person detected, Subject
+  selects nothing and Background selects everything, and the panel shows
+  a plain "No person found" notice. Every slider and tab from v0.2.0 is
+  kept — this is a layout restructure, not a feature cut.
+- **Vignette smoothness, effect and live preview** — the falloff is now a
+  smoothstep curve (zero slope at both ends of the feather zone, so no
+  seam where the falloff starts or ends and no banding), with channels
+  rounded instead of truncated. The interactive preview renders through
+  the exact same pipeline math as export.
+- **Live sliders everywhere** — the canvas preview now follows every
+  slider's transient drag value (Adjustments, Looks intensity, Split
+  Tone, Color Mix, Blur, Vignette, Smooth, Face, Makeup, Eyes, Background,
+  Overlay, Text, Sticker, Insert and Border sliders), instead of only
+  updating on release. Undo history still commits once, on release —
+  live preview and single-commit history are separate paths. (Root cause
+  of the old behavior: the preview rendered at full resolution with no
+  way to abandon a stale render, so drag-time renders queued behind each
+  other and only the release value ever surfaced.)
+- **Canvas zoom** — pinch to zoom (up to 8×) with pan, double-tap to zoom
+  in/out (2.5× at the tap point), and a Reset zoom chip while zoomed.
+  Zoom is a view transform only: it never alters the edit state, brush
+  and tool coordinates are mapped back through it, and it resets when a
+  new photo is loaded. Zoom gestures are inactive while cropping or
+  split-comparing (those keep their own interactions); a previously set
+  zoom stays visible.
+- **Looks fix** — the v0.2.0 category tabs could never leave the visible
+  category (the panel snapped back to the current look's category on
+  every recomposition). Category taps now stick, and both the category
+  tab row and the preset strip are explicitly full-width scrollable, so
+  all 14 presets across all 6 categories are reachable.
+
+Interactive-preview note: the live preview renders from a 1024px
+long-edge downscale through the same pipeline as export (export itself
+still renders at full resolution), and a superseded preview render
+aborts at the next pipeline stage boundary instead of running to
+completion — so slider drags stay smooth even on heavy pipelines.
+
 ## What works in v0.2.0
 
 The carousel now matches Photoshop Express's tool order and names (Premium
