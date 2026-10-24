@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.png" alt="PhotoCraft Express app icon" width="120">
+</p>
+
 # PhotoCraft Express
 
 An Android photo editor (Kotlin + Jetpack Compose) whose interface recreates
