@@ -2,6 +2,7 @@ package com.shawnrodis.photocraftexpress.engine
 
 import kotlin.math.max
 import kotlin.math.min
+import kotlinx.coroutines.CancellationException
 
 /** Pixels plus dimensions, the currency of the pure-Kotlin pipeline. */
 class PixelImage(val pixels: IntArray, val width: Int, val height: Int)
@@ -113,12 +114,23 @@ object PixelPipeline {
      * Bitmap layer (LayerComposite), because they need Android Canvas.
      * [assets] carries ML Kit results already mapped into the rendered
      * frame (face) or in the source frame (person mask, mapped here).
+     * [state.adjustMask] gates the Adjustments-panel edits through the
+     * person mask (FULL = everywhere). [isActive] is checked at stage
+     * boundaries so a superseded preview render can abort early instead
+     * of competing with the render for the latest slider value.
      */
     fun render(
         img: PixelImage, state: EditState,
         applyCrop: Boolean = true,
-        assets: RenderAssets = RenderAssets()
+        assets: RenderAssets = RenderAssets(),
+        isActive: () -> Boolean = { true }
     ): PixelImage {
+        // Lets a superseded preview render abort at stage boundaries
+        // instead of running to completion on a background thread while
+        // a newer slider value already waits (live-preview smoothness).
+        fun checkActive() {
+            if (!isActive()) throw CancellationException("preview render superseded")
+        }
         var geo = applyGeometry(img, state, applyCrop)
         val transform = state.transform
         if (transform != null && !transform.isIdentity) {
@@ -130,75 +142,18 @@ object PixelPipeline {
         val look = Looks.resolve(Looks.byId(state.lookId), state.lookIntensity)
         val adj = state.adj
 
-        // One composed tone LUT: Look first, then the user's adjustments.
-        val lut = AdjustMath.composeLuts(look.toneLut, AdjustMath.buildToneLut(adj))
-        val lutR = IntArray(256) { (lut[it] * 255f + 0.5f).toInt().coerceIn(0, 255) }
-
-        val temperature = (adj.temperature + look.temperature).coerceIn(-100f, 100f)
-        val tint = (adj.tint + look.tint).coerceIn(-100f, 100f)
-        val vibrance = (adj.vibrance + look.vibrance).coerceIn(-100f, 100f)
-        val saturation = (adj.saturation + look.saturation).coerceIn(-100f, 100f)
-        val mono = look.monoAmount
-        val needsPixelStage = temperature != 0f || tint != 0f || vibrance != 0f || saturation != 0f || mono > 0f
-
-        // Temperature: warm pushes R up / B down; tint: positive = magenta
-        // (G down), negative = green (G up).
-        val tt = temperature / 100f
-        val rGain = 1f + 0.18f * tt
-        val bGain = 1f - 0.18f * tt
-        val gGain = 1f - 0.14f * (tint / 100f)
-        val vibV = vibrance / 100f
-        val satS = saturation / 100f
-
-        val px = geo.pixels
-        val out = IntArray(px.size)
-        val vibBuf = FloatArray(3)
-        for (i in px.indices) {
-            val p = px[i]
-            val a = p and -0x1000000
-            var r = lutR[(p shr 16) and 0xFF]
-            var g = lutR[(p shr 8) and 0xFF]
-            var b = lutR[p and 0xFF]
-            if (needsPixelStage) {
-                var rf = r / 255f
-                var gf = g / 255f
-                var bf = b / 255f
-                if (mono > 0f) {
-                    val luma = 0.299f * rf + 0.587f * gf + 0.114f * bf
-                    rf += (luma - rf) * mono
-                    gf += (luma - gf) * mono
-                    bf += (luma - bf) * mono
-                }
-                if (temperature != 0f || tint != 0f) {
-                    rf *= rGain; gf *= gGain; bf *= bGain
-                }
-                if (vibV != 0f) {
-                    AdjustMath.vibranceLin(rf, gf, bf, vibV, vibBuf)
-                    rf = vibBuf[0]; gf = vibBuf[1]; bf = vibBuf[2]
-                }
-                if (satS != 0f) {
-                    val grey = AdjustMath.saturationGrey(rf, gf)
-                    val f = 1f + satS
-                    rf = grey + (rf - grey) * f
-                    gf = grey + (gf - grey) * f
-                    bf = grey + (bf - grey) * f
-                }
-                r = (rf.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
-                g = (gf.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
-                b = (bf.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
-            }
-            out[i] = a or (r shl 16) or (g shl 8) or b
-        }
-
-        val sharpen = max(adj.sharpen, look.sharpen).coerceIn(0f, 100f)
-        var current = if (sharpen > 0f) {
-            val radius = if (max(geo.width, geo.height) > 2000) 2 else 1
-            unsharp(out, geo.width, geo.height, radius, sharpen / 100f * 1.2f)
-        } else {
-            out
-        }
         val curW = geo.width
         val curH = geo.height
+        var current = applyTone(geo, look, adj)
+        checkActive()
+        val sharpen = max(adj.sharpen, look.sharpen).coerceIn(0f, 100f)
+        current = if (sharpen > 0f) {
+            val radius = if (max(curW, curH) > 2000) 2 else 1
+            unsharp(current, curW, curH, radius, sharpen / 100f * 1.2f)
+        } else {
+            current
+        }
+        checkActive()
 
         // Deeper adjustments.
         if (adj.dehaze != 0f) current = AdjustStages.dehaze(current, curW, curH, adj.dehaze)
@@ -209,6 +164,7 @@ object PixelPipeline {
         if (adj.fade != 0f) current = AdjustStages.fade(current, adj.fade)
         if (state.smooth > 0f) current = AdjustStages.smooth(current, curW, curH, state.smooth)
         if (adj.grain > 0f) current = AdjustStages.grain(current, adj.grain)
+        checkActive()
 
         // Color Mix, then Split Tone.
         if (!state.colorMix.isIdentity) {
@@ -240,6 +196,23 @@ object PixelPipeline {
                 state.vignette.feather, state.vignette.roundness
             )
         }
+
+        checkActive()
+
+        // Adjustment mask (Express Full / Subject / Background): blend
+        // the look-only base with the fully adjusted image by the person
+        // mask weight, so only the masked region carries the
+        // Adjustments-panel edits (tone, deeper stages, color mix, split
+        // tone, blur, vignette). Geometry, warps, heal, makeup, layers
+        // and borders are unaffected and apply after this blend.
+        if (state.adjustMask != AdjustMask.FULL) {
+            val base = applyTone(geo, look, Adjustments())
+            val weights = maskWeights(
+                assets.personMaskSrc, state, applyCrop, curW, curH, state.adjustMask
+            )
+            current = blendWithMask(base, current, weights)
+        }
+        checkActive()
 
         // Face + Reshape warps (face data arrives already mapped into the
         // rendered frame by the caller, with the same crop flag as here).
@@ -391,6 +364,118 @@ object PixelPipeline {
                 val bot = v(x0, y1) + (v(x1, y1) - v(x0, y1)) * tx
                 out[y * targetW + x] = top + (bot - top) * ty
             }
+        }
+        return out
+    }
+
+
+    /**
+     * Tone stage: one composed LUT (Look first, then adjustments) plus
+     * the per-pixel stage (mono blend, temperature/tint gains, vibrance,
+     * saturation). Pure tone work only — no sharpening, no deeper
+     * stages. Used both for the main render and for the adjustment-mask
+     * base (look-only tone), so the two always agree exactly.
+     */
+    private fun applyTone(geo: PixelImage, look: ResolvedLook, adj: Adjustments): IntArray {
+        val lut = AdjustMath.composeLuts(look.toneLut, AdjustMath.buildToneLut(adj))
+        val lutR = IntArray(256) { (lut[it] * 255f + 0.5f).toInt().coerceIn(0, 255) }
+        val temperature = (adj.temperature + look.temperature).coerceIn(-100f, 100f)
+        val tint = (adj.tint + look.tint).coerceIn(-100f, 100f)
+        val vibrance = (adj.vibrance + look.vibrance).coerceIn(-100f, 100f)
+        val saturation = (adj.saturation + look.saturation).coerceIn(-100f, 100f)
+        val mono = look.monoAmount
+        val needsPixelStage = temperature != 0f || tint != 0f || vibrance != 0f || saturation != 0f || mono > 0f
+        val tt = temperature / 100f
+        val rGain = 1f + 0.18f * tt
+        val bGain = 1f - 0.18f * tt
+        val gGain = 1f - 0.14f * (tint / 100f)
+        val vibV = vibrance / 100f
+        val satS = saturation / 100f
+        val px = geo.pixels
+        val out = IntArray(px.size)
+        val vibBuf = FloatArray(3)
+        for (i in px.indices) {
+            val p = px[i]
+            val a = p and -0x1000000
+            var r = lutR[(p shr 16) and 0xFF]
+            var g = lutR[(p shr 8) and 0xFF]
+            var b = lutR[p and 0xFF]
+            if (needsPixelStage) {
+                var rf = r / 255f
+                var gf = g / 255f
+                var bf = b / 255f
+                if (mono > 0f) {
+                    val luma = 0.299f * rf + 0.587f * gf + 0.114f * bf
+                    rf += (luma - rf) * mono
+                    gf += (luma - gf) * mono
+                    bf += (luma - bf) * mono
+                }
+                if (temperature != 0f || tint != 0f) {
+                    rf *= rGain; gf *= gGain; bf *= bGain
+                }
+                if (vibV != 0f) {
+                    AdjustMath.vibranceLin(rf, gf, bf, vibV, vibBuf)
+                    rf = vibBuf[0]; gf = vibBuf[1]; bf = vibBuf[2]
+                }
+                if (satS != 0f) {
+                    val grey = AdjustMath.saturationGrey(rf, gf)
+                    val f = 1f + satS
+                    rf = grey + (rf - grey) * f
+                    gf = grey + (gf - grey) * f
+                    bf = grey + (bf - grey) * f
+                }
+                r = (rf.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+                g = (gf.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+                b = (bf.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+            }
+            out[i] = a or (r shl 16) or (g shl 8) or b
+        }
+        return out
+    }
+
+    /**
+     * Person-mask weights in the rendered frame for the adjustment mask.
+     * SUBJECT = person confidence; BACKGROUND = its inverse. With no
+     * person mask, or no confident person in it (max <= 0.5, the same
+     * threshold FaceAnalysis uses for personFound), SUBJECT selects
+     * nothing (all zeros) and BACKGROUND selects everything (all ones).
+     */
+    private fun maskWeights(
+        maskSrc: PixelImage?, state: EditState, applyCrop: Boolean,
+        targetW: Int, targetH: Int, mask: AdjustMask
+    ): FloatArray {
+        if (maskSrc == null) {
+            return FloatArray(targetW * targetH) {
+                if (mask == AdjustMask.BACKGROUND) 1f else 0f
+            }
+        }
+        val mapped = mapMask(maskSrc, state, applyCrop, targetW, targetH)
+        val hasPerson = mapped.any { it > 0.5f }
+        if (!hasPerson) {
+            return FloatArray(targetW * targetH) {
+                if (mask == AdjustMask.BACKGROUND) 1f else 0f
+            }
+        }
+        return if (mask == AdjustMask.BACKGROUND) {
+            FloatArray(mapped.size) { 1f - mapped[it] }
+        } else {
+            mapped
+        }
+    }
+
+    /** Per-pixel blend: out = base * (1 - w) + adjusted * w, rounded. */
+    private fun blendWithMask(base: IntArray, adjusted: IntArray, w: FloatArray): IntArray {
+        val out = IntArray(adjusted.size)
+        for (i in adjusted.indices) {
+            val weight = w[i].coerceIn(0f, 1f)
+            val bp = base[i]
+            val ap = adjusted[i]
+            val r = ((bp shr 16) and 0xFF) * (1f - weight) + ((ap shr 16) and 0xFF) * weight + 0.5f
+            val g = ((bp shr 8) and 0xFF) * (1f - weight) + ((ap shr 8) and 0xFF) * weight + 0.5f
+            val b = (bp and 0xFF) * (1f - weight) + (ap and 0xFF) * weight + 0.5f
+            out[i] = (ap and -0x1000000) or
+                (r.toInt().coerceIn(0, 255) shl 16) or
+                (g.toInt().coerceIn(0, 255) shl 8) or b.toInt().coerceIn(0, 255)
         }
         return out
     }

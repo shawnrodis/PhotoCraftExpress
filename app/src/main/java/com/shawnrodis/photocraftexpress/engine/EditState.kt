@@ -80,6 +80,13 @@ data class EditState(
     val transform: WarpMath.Quad? = null, // perspective correction, null = identity
     val splitTone: SplitTone = SplitTone(),
     val colorMix: ColorMix = ColorMix(),
+    /**
+     * Which region Adjustments-panel edits apply to (Express mask
+     * selector). Deliberately excluded from [isIdentity]: a mask
+     * selection alone, with identity adjustments, renders identically
+     * to the untouched photo.
+     */
+    val adjustMask: AdjustMask = AdjustMask.FULL,
     val blur: BlurFx = BlurFx(),
     val vignette: Vignette = Vignette(),
     val smooth: Float = 0f, // 0..100, global smoothing (not face-masked)
