@@ -124,6 +124,8 @@ import com.shawnrodis.photocraftexpress.engine.Vignette
 import com.shawnrodis.photocraftexpress.engine.ZoomState
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.isActive
 import com.shawnrodis.photocraftexpress.engine.WarpMath
 import kotlin.math.roundToInt
@@ -241,18 +243,35 @@ fun EditorScreen(
 
     var insertedBitmaps by remember { mutableStateOf<Map<String, Bitmap>>(emptyMap()) }
 
-    var lookThumbs by remember { mutableStateOf<Map<String, Bitmap>>(emptyMap()) }
-    LaunchedEffect(sourceBitmap) {
-        lookThumbs = withContext(Dispatchers.Default) {
-            val small = BitmapBridge.downscale(BitmapBridge.toPixelImage(sourceBitmap), 240)
-            Looks.ALL.associate { look ->
-                look.id to BitmapBridge.toBitmap(
-                    PixelPipeline.render(
-                        small,
-                        EditState(lookId = look.id, lookIntensity = 100f)
+    // Looks thumbnails, rendered LAZILY (v0.2.2): with 87 presets,
+    // rendering every thumbnail eagerly on photo load would stall the
+    // editor. The strip reports its visible items (plus immediate
+    // neighbours) and only those render, into this cache; items outside
+    // the viewport keep the dark placeholder until scrolled into view.
+    // The cache resets with the photo.
+    var lookThumbs by remember(sourceBitmap) { mutableStateOf<Map<String, Bitmap>>(emptyMap()) }
+    val lookThumbBase = remember(sourceBitmap) {
+        BitmapBridge.downscale(BitmapBridge.toPixelImage(sourceBitmap), 240)
+    }
+    val lookThumbScope = rememberCoroutineScope()
+    val lookThumbInflight = remember(sourceBitmap) { mutableSetOf<String>() }
+    fun requestLookThumbs(ids: List<String>) {
+        val missing = ids.filter { it !in lookThumbs && it !in lookThumbInflight }
+        if (missing.isEmpty()) return
+        lookThumbInflight += missing
+        lookThumbScope.launch {
+            val rendered = withContext(Dispatchers.Default) {
+                missing.associate { id ->
+                    id to BitmapBridge.toBitmap(
+                        PixelPipeline.render(
+                            lookThumbBase,
+                            EditState(lookId = id, lookIntensity = 100f)
+                        )
                     )
-                )
+                }
             }
+            lookThumbs = lookThumbs + rendered
+            lookThumbInflight -= missing
         }
     }
 
@@ -322,41 +341,64 @@ fun EditorScreen(
     val applyCrop = tool != EditorTool.Crop || cropTab == CropTab.TRANSFORM
 
     var preview by remember { mutableStateOf<Bitmap?>(null) }
+    // The 1024px preview base is cached: previously every preview render
+    // converted the full-resolution source bitmap and downscaled it again.
+    // The pipeline never mutates its input (every stage allocates), so
+    // sharing this base across renders is safe.
+    val previewBase = remember(sourceBitmap) {
+        BitmapBridge.downscale(BitmapBridge.toPixelImage(sourceBitmap), 1024)
+    }
+    // Live-slider render worker (v0.2.2 fix). Slider drags must update
+    // the canvas DURING the drag, not only on release. The v0.2.1
+    // approach — LaunchedEffect(cur) with cooperative cancellation —
+    // could never do that: drag ticks arrive faster than one render
+    // completes, so every render was cancelled before it finished and
+    // only the release value ever surfaced. Instead, drag values are
+    // offered to a conflated flow (only the latest survives) and a
+    // single worker renders each queued value to completion, so the
+    // preview advances at render rate throughout the drag. History
+    // still commits once, on release. replay = 1 matters: without it,
+    // an offer emitted before the worker (re)subscribes is lost — the
+    // first preview after photo load would never render.
+    val previewRequests = remember(sourceBitmap) {
+        MutableSharedFlow<PreviewRequest>(
+            replay = 1,
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST
+        )
+    }
     LaunchedEffect(cur, sourceBitmap, analysis, insertedBitmaps, applyCrop, tool) {
-        val out = withContext(Dispatchers.Default) {
-            // Interactive preview renders from a 1024px-long-edge
-            // downscale through the SAME PixelPipeline.render (and the
-            // same vignette math) as export, so slider drags stay smooth
-            // while the preview and the saved result agree exactly.
-            // Export still renders at full resolution via Exporter.
-            val px = BitmapBridge.downscale(BitmapBridge.toPixelImage(sourceBitmap), 1024)
-            val faceData: FaceRenderData? = analysis?.faces?.firstOrNull()?.let {
+        previewRequests.tryEmit(
+            PreviewRequest(cur, analysis, insertedBitmaps, applyCrop, tool)
+        )
+    }
+    LaunchedEffect(sourceBitmap) {
+        renderLatest(previewRequests, { req ->
+            val faceData: FaceRenderData? = req.analysis?.faces?.firstOrNull()?.let {
                 FaceAnalysis.mapFace(
-                    it, cur, applyCrop,
+                    it, req.state, req.applyCrop,
                     sourceBitmap.width.toFloat() / sourceBitmap.height
                 )
             }
-            // A newer slider value supersedes this render: abort at
-            // the next stage boundary instead of finishing stale work.
+            // Stage-boundary aborts still guard WORKER cancellation (a
+            // new photo replacing the source); they no longer fire on
+            // new drag ticks, which is the whole point of the worker.
             val ctx = currentCoroutineContext()
             val rendered = PixelPipeline.render(
-                px, cur, applyCrop,
-                RenderAssets(faceData, analysis?.personMask),
+                previewBase, req.state, req.applyCrop,
+                RenderAssets(faceData, req.analysis?.personMask),
                 isActive = { ctx.isActive }
             )
-            // A superseded render must never assign a stale bitmap:
-            // abort before the layer composite and before returning.
             ctx.ensureActive()
             var bmp = BitmapBridge.toBitmap(rendered)
             // Layers live in the cropped frame; while cropping (uncropped
             // preview) they would draw in the wrong place, so hide them.
-            if (tool != EditorTool.Crop) {
-                bmp = LayerComposite.composite(bmp, cur, insertedBitmaps)
+            if (req.tool != EditorTool.Crop) {
+                bmp = LayerComposite.composite(bmp, req.state, req.insertedBitmaps)
             }
             ctx.ensureActive()
             bmp
-        }
-        preview = out
+        }, { preview = it })
     }
 
     // Split-compare "before": the same geometry (rotation/flips/crop/
@@ -961,6 +1003,7 @@ fun EditorScreen(
             when (tool) {
                 EditorTool.Looks -> LooksPanel(
                     thumbnails = lookThumbs,
+                    onVisibleLooks = { requestLookThumbs(it) },
                     selectedLookId = cur.lookId,
                     intensity = cur.lookIntensity,
                     onSelectLook = { commitDirect(cur.copy(lookId = it)) },

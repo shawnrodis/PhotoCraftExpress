@@ -71,6 +71,43 @@ object PixelPipeline {
     }
 
     /** Applies rotation, flips and (optionally) crop from [state]. */
+    /**
+     * Look + user merges for the deeper stages (v0.2.2). Shifts and
+     * saturations ADD and clamp, matching how temperature/tint add in
+     * applyTone; hues and vignette shapes are not additive, so the
+     * user's value wins when the user touched that stage, else the
+     * Look's value carries. A Look that sets nothing returns the user's
+     * value untouched.
+     */
+    private fun mergeColorMix(user: ColorMix, look: ColorMix): ColorMix {
+        if (look.isIdentity) return user
+        return ColorMix(
+            FloatArray(8) { (user.hue[it] + look.hue[it]).coerceIn(-100f, 100f) },
+            FloatArray(8) { (user.sat[it] + look.sat[it]).coerceIn(-100f, 100f) },
+            FloatArray(8) { (user.lum[it] + look.lum[it]).coerceIn(-100f, 100f) }
+        )
+    }
+
+    private fun mergeSplitTone(user: SplitTone, look: SplitTone): SplitTone {
+        if (look.isIdentity) return user
+        return SplitTone(
+            shadowHue = if (user.shadowSat > 0f) user.shadowHue else look.shadowHue,
+            shadowSat = (user.shadowSat + look.shadowSat).coerceIn(0f, 100f),
+            highlightHue = if (user.highlightSat > 0f) user.highlightHue else look.highlightHue,
+            highlightSat = (user.highlightSat + look.highlightSat).coerceIn(0f, 100f)
+        )
+    }
+
+    private fun mergeVignette(user: Vignette, look: Vignette): Vignette {
+        if (look.isIdentity) return user
+        return Vignette(
+            amount = (user.amount + look.amount).coerceIn(-100f, 100f),
+            midPoint = if (!user.isIdentity) user.midPoint else look.midPoint,
+            feather = if (!user.isIdentity) user.feather else look.feather,
+            roundness = if (!user.isIdentity) user.roundness else look.roundness
+        )
+    }
+
     fun applyGeometry(img: PixelImage, state: EditState, applyCrop: Boolean = true): PixelImage {
         var cur = img
         when (((state.rotation % 360) + 360) % 360) {
@@ -155,26 +192,37 @@ object PixelPipeline {
         }
         checkActive()
 
-        // Deeper adjustments.
-        if (adj.dehaze != 0f) current = AdjustStages.dehaze(current, curW, curH, adj.dehaze)
+        // Deeper adjustments. Look stage contributions ADD to the user's
+        // panel values (same philosophy as temperature/tint in
+        // applyTone), so a Look grades the photo and the user's sliders
+        // still stack on top. The mask-blend base below carries the
+        // Look-only stages, so the mask gates panel edits, not the Look.
+        val effDehaze = (adj.dehaze + look.dehaze).coerceIn(-100f, 100f)
+        val effTexture = (adj.texture + look.texture).coerceIn(-100f, 100f)
+        val effClarity = (adj.clarity + look.clarity).coerceIn(-100f, 100f)
+        val effGrain = (adj.grain + look.grain).coerceIn(0f, 100f)
+        val effColorMix = mergeColorMix(state.colorMix, look.colorMix)
+        val effSplitTone = mergeSplitTone(state.splitTone, look.splitTone)
+        val effVignette = mergeVignette(state.vignette, look.vignette)
+        if (effDehaze != 0f) current = AdjustStages.dehaze(current, curW, curH, effDehaze)
         if (adj.reduceColorNoise > 0f) current = AdjustStages.reduceColorNoise(current, curW, curH, adj.reduceColorNoise)
         if (adj.reduceLuminanceNoise > 0f) current = AdjustStages.reduceLuminanceNoise(current, curW, curH, adj.reduceLuminanceNoise)
-        if (adj.texture != 0f) current = AdjustStages.texture(current, curW, curH, adj.texture)
-        if (adj.clarity != 0f) current = AdjustStages.clarity(current, curW, curH, adj.clarity)
+        if (effTexture != 0f) current = AdjustStages.texture(current, curW, curH, effTexture)
+        if (effClarity != 0f) current = AdjustStages.clarity(current, curW, curH, effClarity)
         if (adj.fade != 0f) current = AdjustStages.fade(current, adj.fade)
         if (state.smooth > 0f) current = AdjustStages.smooth(current, curW, curH, state.smooth)
-        if (adj.grain > 0f) current = AdjustStages.grain(current, adj.grain)
+        if (effGrain > 0f) current = AdjustStages.grain(current, effGrain)
         checkActive()
 
         // Color Mix, then Split Tone.
-        if (!state.colorMix.isIdentity) {
-            current = ColorMath.colorMix(current, state.colorMix.hue, state.colorMix.sat, state.colorMix.lum)
+        if (!effColorMix.isIdentity) {
+            current = ColorMath.colorMix(current, effColorMix.hue, effColorMix.sat, effColorMix.lum)
         }
-        if (!state.splitTone.isIdentity) {
+        if (!effSplitTone.isIdentity) {
             current = ColorMath.splitTone(
                 current,
-                state.splitTone.shadowHue, state.splitTone.shadowSat,
-                state.splitTone.highlightHue, state.splitTone.highlightSat
+                effSplitTone.shadowHue, effSplitTone.shadowSat,
+                effSplitTone.highlightHue, effSplitTone.highlightSat
             )
         }
 
@@ -189,11 +237,11 @@ object PixelPipeline {
                 BlurMode.NONE -> current
             }
         }
-        if (!state.vignette.isIdentity) {
+        if (!effVignette.isIdentity) {
             current = AdjustStages.vignette(
                 current, curW, curH,
-                state.vignette.amount, state.vignette.midPoint,
-                state.vignette.feather, state.vignette.roundness
+                effVignette.amount, effVignette.midPoint,
+                effVignette.feather, effVignette.roundness
             )
         }
 
@@ -206,7 +254,32 @@ object PixelPipeline {
         // tone, blur, vignette). Geometry, warps, heal, makeup, layers
         // and borders are unaffected and apply after this blend.
         if (state.adjustMask != AdjustMask.FULL) {
-            val base = applyTone(geo, look, Adjustments())
+            // Look-only base: the Look's tone (applyTone) PLUS its
+            // deeper stages, in pipeline order. The mask then gates
+            // only the user's panel edits: the masked region gets
+            // user+Look, the rest still gets the full Look.
+            var base = applyTone(geo, look, Adjustments())
+            if (look.dehaze != 0f) base = AdjustStages.dehaze(base, curW, curH, look.dehaze)
+            if (look.texture != 0f) base = AdjustStages.texture(base, curW, curH, look.texture)
+            if (look.clarity != 0f) base = AdjustStages.clarity(base, curW, curH, look.clarity)
+            if (look.grain > 0f) base = AdjustStages.grain(base, look.grain)
+            if (!look.colorMix.isIdentity) {
+                base = ColorMath.colorMix(base, look.colorMix.hue, look.colorMix.sat, look.colorMix.lum)
+            }
+            if (!look.splitTone.isIdentity) {
+                base = ColorMath.splitTone(
+                    base,
+                    look.splitTone.shadowHue, look.splitTone.shadowSat,
+                    look.splitTone.highlightHue, look.splitTone.highlightSat
+                )
+            }
+            if (!look.vignette.isIdentity) {
+                base = AdjustStages.vignette(
+                    base, curW, curH,
+                    look.vignette.amount, look.vignette.midPoint,
+                    look.vignette.feather, look.vignette.roundness
+                )
+            }
             val weights = maskWeights(
                 assets.personMaskSrc, state, applyCrop, curW, curH, state.adjustMask
             )

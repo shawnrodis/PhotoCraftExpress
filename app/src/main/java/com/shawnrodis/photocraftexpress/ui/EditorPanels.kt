@@ -19,8 +19,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
@@ -41,16 +44,25 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathNode
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shawnrodis.photocraftexpress.engine.AdjustMask
@@ -171,9 +183,12 @@ fun ModeChips(
     options: List<String>,
     selected: String,
     onSelect: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    state: LazyListState? = null
 ) {
+    val listState = state ?: rememberLazyListState()
     LazyRow(
+        state = listState,
         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         modifier = modifier
@@ -195,6 +210,258 @@ fun ModeChips(
     }
 }
 
+/**
+ * One parameter of a multi-parameter tab (Vignette, Split Tone, Blur).
+ * Express's pattern: icon chips pick the parameter, ONE shared slider
+ * controls the selected parameter — not a stack of labeled sliders.
+ * Kept as top-level data so the parameter sets (names, ranges) are
+ * unit-testable without composing anything.
+ */
+data class TabParam<T>(
+    val label: String,
+    val range: ClosedFloatingPointRange<Float>,
+    val get: (T) -> Float,
+    val set: (T, Float) -> T,
+    val format: (Float) -> String = ::formatSliderValue
+)
+
+/** Vignette parameters in Express's chip order. Amount keeps its +100..-100 range. */
+val VIGNETTE_PARAMS = listOf(
+    TabParam<Vignette>("Amount", -100f..100f, { it.amount }, { v, x -> v.copy(amount = x) }),
+    TabParam<Vignette>("Mid Point", 0f..100f, { it.midPoint }, { v, x -> v.copy(midPoint = x) }),
+    TabParam<Vignette>("Feather", 0f..100f, { it.feather }, { v, x -> v.copy(feather = x) }),
+    TabParam<Vignette>("Roundness", -100f..100f, { it.roundness }, { v, x -> v.copy(roundness = x) })
+)
+
+/** Split Tone parameters in Express's chip order (shadow pair, highlight pair). */
+val SPLIT_TONE_PARAMS = listOf(
+    TabParam<SplitTone>("Shadow Hue", 0f..360f, { it.shadowHue }, { s, x -> s.copy(shadowHue = x) }, { "${it.toInt()}°" }),
+    TabParam<SplitTone>("Shadow Saturation", 0f..100f, { it.shadowSat }, { s, x -> s.copy(shadowSat = x) }),
+    TabParam<SplitTone>("Highlight Hue", 0f..360f, { it.highlightHue }, { s, x -> s.copy(highlightHue = x) }, { "${it.toInt()}°" }),
+    TabParam<SplitTone>("Highlight Saturation", 0f..100f, { it.highlightSat }, { s, x -> s.copy(highlightSat = x) })
+)
+
+/** Blur parameters. Width/Height only apply to the Radial ellipse. */
+val BLUR_PARAMS = listOf(
+    TabParam<BlurFx>("Amount", 0f..100f, { it.amount }, { b, x -> b.copy(amount = x) }),
+    TabParam<BlurFx>("Feather", 0f..100f, { it.feather }, { b, x -> b.copy(feather = x) }),
+    TabParam<BlurFx>("Roundness", -100f..100f, { it.roundness }, { b, x -> b.copy(roundness = x) }),
+    TabParam<BlurFx>("Width", 5f..100f, { it.rx * 100f }, { b, x -> b.copy(rx = x / 100f) }, { "${it.toInt()}%" }),
+    TabParam<BlurFx>("Height", 5f..100f, { it.ry * 100f }, { b, x -> b.copy(ry = x / 100f) }, { "${it.toInt()}%" })
+)
+
+/** Small hand-drawn parameter icons (house style: simple geometry, no Adobe art). */
+private fun paramIcon(name: String, paths: ImageVector.Builder.() -> Unit): ImageVector =
+    ImageVector.Builder(name, 24.dp, 24.dp, 24f, 24f).apply(paths).build()
+
+private fun ImageVector.Builder.filledPath(data: List<PathNode>) {
+    addPath(data, pathFillType = PathFillType.NonZero, fill = SolidColor(Color.White))
+}
+
+private fun ImageVector.Builder.strokedPath(data: List<PathNode>, width: Float = 1.6f) {
+    addPath(
+        data, pathFillType = PathFillType.NonZero,
+        fill = SolidColor(Color.Transparent), stroke = SolidColor(Color.White),
+        strokeLineWidth = width, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round
+    )
+}
+
+/** Teardrop: Amount (vignette strength / blur amount). */
+private val AmountIcon: ImageVector = paramIcon("Amount") {
+    filledPath(
+        listOf(
+            PathNode.MoveTo(12f, 2f),
+            PathNode.CurveTo(12f, 2f, 5f, 10f, 5f, 15f),
+            PathNode.ArcTo(7f, 7f, 0f, false, true, 19f, 15f),
+            PathNode.CurveTo(19f, 10f, 12f, 2f, 12f, 2f),
+            PathNode.Close
+        )
+    )
+}
+
+/** Target: Mid Point (where the vignette falloff centres). */
+private val MidPointIcon: ImageVector = paramIcon("MidPoint") {
+    strokedPath(
+        listOf(
+            PathNode.MoveTo(4f, 12f),
+            PathNode.ArcTo(8f, 8f, 0f, true, false, 20f, 12f),
+            PathNode.ArcTo(8f, 8f, 0f, true, false, 4f, 12f),
+            PathNode.Close
+        )
+    )
+    strokedPath(
+        listOf(
+            PathNode.MoveTo(8.5f, 12f),
+            PathNode.ArcTo(3.5f, 3.5f, 0f, true, false, 15.5f, 12f),
+            PathNode.ArcTo(3.5f, 3.5f, 0f, true, false, 8.5f, 12f),
+            PathNode.Close
+        )
+    )
+    filledPath(
+        listOf(
+            PathNode.MoveTo(10.5f, 12f),
+            PathNode.ArcTo(1.5f, 1.5f, 0f, true, false, 13.5f, 12f),
+            PathNode.ArcTo(1.5f, 1.5f, 0f, true, false, 10.5f, 12f),
+            PathNode.Close
+        )
+    )
+}
+
+/** Nested squares: Feather (softness of an edge). */
+private val FeatherIcon: ImageVector = paramIcon("Feather") {
+    strokedPath(
+        listOf(
+            PathNode.MoveTo(4f, 4f), PathNode.LineTo(20f, 4f),
+            PathNode.LineTo(20f, 20f), PathNode.LineTo(4f, 20f), PathNode.Close
+        )
+    )
+    strokedPath(
+        listOf(
+            PathNode.MoveTo(8f, 8f), PathNode.LineTo(16f, 8f),
+            PathNode.LineTo(16f, 16f), PathNode.LineTo(8f, 16f), PathNode.Close
+        )
+    )
+}
+
+/** Corner arcs: Roundness (how circular the falloff/ellipse is). */
+private val RoundnessIcon: ImageVector = paramIcon("Roundness") {
+    strokedPath(
+        listOf(
+            PathNode.MoveTo(4f, 20f), PathNode.LineTo(4f, 10f),
+            PathNode.QuadTo(4f, 4f, 10f, 4f), PathNode.LineTo(20f, 4f)
+        )
+    )
+    strokedPath(
+        listOf(
+            PathNode.MoveTo(8f, 20f), PathNode.LineTo(8f, 13f),
+            PathNode.QuadTo(8f, 8f, 13f, 8f), PathNode.LineTo(20f, 8f)
+        )
+    )
+}
+
+/** Horizontal double arrow: Width (ellipse horizontal radius). */
+private val WidthIcon: ImageVector = paramIcon("Width") {
+    strokedPath(
+        listOf(
+            PathNode.MoveTo(3f, 12f), PathNode.LineTo(21f, 12f),
+            PathNode.MoveTo(3f, 12f), PathNode.LineTo(7f, 8f),
+            PathNode.MoveTo(3f, 12f), PathNode.LineTo(7f, 16f),
+            PathNode.MoveTo(21f, 12f), PathNode.LineTo(17f, 8f),
+            PathNode.MoveTo(21f, 12f), PathNode.LineTo(17f, 16f)
+        )
+    )
+}
+
+/** Vertical double arrow: Height (ellipse vertical radius). */
+private val HeightIcon: ImageVector = paramIcon("Height") {
+    strokedPath(
+        listOf(
+            PathNode.MoveTo(12f, 3f), PathNode.LineTo(12f, 21f),
+            PathNode.MoveTo(12f, 3f), PathNode.LineTo(8f, 7f),
+            PathNode.MoveTo(12f, 3f), PathNode.LineTo(16f, 7f),
+            PathNode.MoveTo(12f, 21f), PathNode.LineTo(8f, 17f),
+            PathNode.MoveTo(12f, 21f), PathNode.LineTo(16f, 17f)
+        )
+    )
+}
+
+private fun vignetteIconFor(label: String): ImageVector = when (label) {
+    "Amount" -> AmountIcon
+    "Mid Point" -> MidPointIcon
+    "Feather" -> FeatherIcon
+    else -> RoundnessIcon
+}
+
+private fun blurIconFor(label: String): ImageVector = when (label) {
+    "Amount" -> AmountIcon
+    "Feather" -> FeatherIcon
+    "Roundness" -> RoundnessIcon
+    "Width" -> WidthIcon
+    else -> HeightIcon
+}
+
+/** One icon chip: small icon (or colour dot) above a label, highlighted when selected. */
+data class ParamOption(
+    val label: String,
+    val icon: ImageVector? = null,
+    val dot: Color? = null
+)
+
+/**
+ * Express's parameter picker: a row of icon chips above one shared slider.
+ * Chips are content-sized and the row scrolls, so long labels never wrap
+ * and every parameter stays reachable.
+ */
+@Composable
+fun ParamChips(
+    options: List<ParamOption>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        items(options, key = { it.label }) { opt ->
+            val sel = opt.label == selected
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .clickable { onSelect(opt.label) }
+                    .padding(vertical = 2.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (sel) Color(0xFF1E3A5F) else Color(0xFF2A2A2A))
+                        .border(
+                            width = if (sel) 2.dp else 0.dp,
+                            color = if (sel) Accent else Color.Transparent,
+                            shape = RoundedCornerShape(10.dp)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when {
+                        opt.icon != null -> Icon(
+                            opt.icon, null,
+                            tint = if (sel) Accent else Color(0xFFBDBDBD),
+                            modifier = Modifier.size(22.dp)
+                        )
+                        opt.dot != null -> Box(
+                            Modifier.size(18.dp).clip(CircleShape).background(opt.dot)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    opt.label, fontSize = 11.sp, maxLines = 1,
+                    color = if (sel) Color.White else Color(0xFFBDBDBD),
+                    fontWeight = if (sel) FontWeight.SemiBold else FontWeight.Normal
+                )
+            }
+        }
+    }
+}
+
+/** HSV (full saturation/value) to Compose colour, for Color Mix channel dots. */
+fun channelDotColor(hueCentre: Float): Color {
+    val h = ((hueCentre % 360f) + 360f) % 360f / 60f
+    val i = h.toInt()
+    val f = h - i
+    val (r, g, b) = when (i) {
+        0 -> Triple(1f, f, 0f)
+        1 -> Triple(1f - f, 1f, 0f)
+        2 -> Triple(0f, 1f, f)
+        3 -> Triple(0f, 1f - f, 1f)
+        4 -> Triple(f, 0f, 1f)
+        else -> Triple(1f, 0f, 1f - f)
+    }
+    return Color(0.1f + 0.8f * r, 0.1f + 0.8f * g, 0.1f + 0.8f * b)
+}
+
 @Composable
 fun PanelColumn(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Column(
@@ -211,6 +478,30 @@ fun PanelColumn(modifier: Modifier = Modifier, content: @Composable ColumnScope.
 // Looks (with categories)
 // ----------------------------------------------------------------------
 
+/** One entry of the continuous Looks strip: preset + its category. */
+data class LooksStripEntry(val id: String, val name: String, val category: String)
+
+/**
+ * Flat Looks strip: every preset exactly once, categories in CATEGORIES
+ * order, presets in their within-category order. This is the structure
+ * the catalog expansion slots into: new categories/presets just extend
+ * CATEGORIES and the strip, the tabs and the tracking all follow.
+ */
+fun looksStripEntries(): List<LooksStripEntry> =
+    Looks.CATEGORIES.flatMap { (category, looks) ->
+        looks.map { LooksStripEntry(it.id, it.name, category) }
+    }
+
+/** Category of the strip item at [index] (clamped); "" when the strip is empty. */
+fun looksStripCategoryAt(entries: List<LooksStripEntry>, index: Int): String {
+    if (entries.isEmpty()) return ""
+    return entries[index.coerceIn(0, entries.size - 1)].category
+}
+
+/** First strip index of [category], or 0 when the category is absent. */
+fun looksStripStartOf(entries: List<LooksStripEntry>, category: String): Int =
+    entries.indexOfFirst { it.category == category }.coerceAtLeast(0)
+
 @Composable
 fun LooksPanel(
     thumbnails: Map<String, Bitmap>,
@@ -219,36 +510,70 @@ fun LooksPanel(
     onSelectLook: (String) -> Unit,
     onIntensityDraft: (Float) -> Unit,
     onIntensityCommit: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onVisibleLooks: (List<String>) -> Unit = {}
 ) {
-    var category by remember { mutableStateOf(Looks.CATEGORIES.firstOrNull()?.first ?: "Normal") }
-    val looksInCategory = Looks.CATEGORIES.firstOrNull { it.first == category }?.second
-        ?: Looks.ALL
-    // Follow the selected look's category ONLY when the look itself
-    // changes. (Previously this ran on every composition, which snapped
-    // the tab row back to the current look's category the moment the
-    // user tapped any other tab — categories beyond the first were
-    // unreachable. That was the v0.2.0 Looks bug.)
-    LaunchedEffect(selectedLookId) {
-        Looks.CATEGORIES.firstOrNull { (_, looks) ->
-            looks.any { it.id == selectedLookId }
-        }?.let { category = it.first }
+    // v0.2.2: Express's Looks is ONE continuous strip, not per-category
+    // strips. Scrolling flows through categories in order; the tab row
+    // auto-tracks the strip position, and tapping a tab jumps the strip
+    // to that category. The v0.2.0/v0.2.1 per-category filter (and its
+    // snap-back fix) is gone: with a single strip, no category can be
+    // hidden by a filter, so there is nothing to snap back from.
+    val entries = remember { looksStripEntries() }
+    val stripState = rememberLazyListState()
+    val tabState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var activeCategory by remember {
+        mutableStateOf(entries.firstOrNull()?.category ?: "Normal")
+    }
+    // Track: strip scroll position -> highlighted tab.
+    LaunchedEffect(stripState) {
+        snapshotFlow { stripState.firstVisibleItemIndex }.collect { idx ->
+            val cat = looksStripCategoryAt(entries, idx)
+            if (cat.isNotEmpty() && cat != activeCategory) activeCategory = cat
+        }
+    }
+    // Keep the active tab visible in the tab row.
+    LaunchedEffect(activeCategory) {
+        val tabIdx = Looks.CATEGORIES.indexOfFirst { it.first == activeCategory }.coerceAtLeast(0)
+        if (tabState.firstVisibleItemIndex != tabIdx) tabState.animateScrollToItem(tabIdx)
+    }
+    // Lazy thumbnails: report visible strip items (plus immediate
+    // neighbours for fling-ahead) so only those render, cached.
+    LaunchedEffect(stripState) {
+        snapshotFlow { stripState.layoutInfo.visibleItemsInfo.map { it.index } }
+            .collect { indices ->
+                if (indices.isEmpty()) return@collect
+                val ids = indices.flatMap { listOf(it - 1, it, it + 1) }
+                    .filter { it in entries.indices }
+                    .map { entries[it].id }
+                    .distinct()
+                onVisibleLooks(ids)
+            }
     }
     Column(modifier = modifier.background(PanelBg)) {
         ModeChips(
             options = Looks.CATEGORIES.map { it.first },
-            selected = category,
-            onSelect = { category = it },
-            modifier = Modifier.fillMaxWidth()
+            selected = activeCategory,
+            onSelect = { name ->
+                activeCategory = name
+                scope.launch { stripState.animateScrollToItem(looksStripStartOf(entries, name)) }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            state = tabState
         )
         LazyRow(
+            state = stripState,
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            items(looksInCategory, key = { it.id }) { look ->
-                val selected = look.id == selectedLookId
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            items(entries, key = { it.id }) { entry ->
+                val selected = entry.id == selectedLookId
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.width(76.dp)
+                ) {
                     Box(
                         modifier = Modifier
                             .size(64.dp)
@@ -258,12 +583,15 @@ fun LooksPanel(
                                 if (selected) Modifier.border(2.dp, Accent, RoundedCornerShape(8.dp))
                                 else Modifier
                             )
-                            .clickable { onSelectLook(look.id) }
+                            .clickable {
+                                onSelectLook(entry.id)
+                                activeCategory = entry.category
+                            }
                     ) {
-                        thumbnails[look.id]?.let { bmp ->
+                        thumbnails[entry.id]?.let { bmp ->
                             Image(
                                 bitmap = bmp.asImageBitmap(),
-                                contentDescription = look.name,
+                                contentDescription = entry.name,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.size(64.dp)
                             )
@@ -271,8 +599,10 @@ fun LooksPanel(
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        look.name,
+                        entry.name,
                         fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                         color = if (selected) Color.White else Color(0xFFBDBDBD),
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
                     )
@@ -343,11 +673,20 @@ private val ADJUST_SLIDER_SPECS: List<SliderSpec> = listOf(
 /**
  * Demo states for the adjustment thumbnail strip: each adjustment alone
  * at +50 (or 50 for 0..100 sliders), rendered from the current photo.
+ * Five adjustments read as identical to the base at 50 on a thumbnail
+ * (v0.2.2 field report + render test), so they demo stronger — this is
+ * the thumbnail render only, never the slider default.
  */
 fun adjustThumbStates(): List<Pair<String, Adjustments>> =
     ADJUST_STRIP_ORDER.mapNotNull { name ->
         ADJUST_SLIDER_SPECS.firstOrNull { it.name == name }?.let { spec ->
-            name to spec.set(Adjustments(), 50f)
+            val demo = when (name) {
+                "Clarity", "Whites", "Blacks" -> 80f
+                "Reduce Luminance Noise" -> 90f
+                "Reduce Color Noise" -> 100f
+                else -> 50f
+            }
+            name to spec.set(Adjustments(), demo)
         }
     }
 
@@ -480,7 +819,20 @@ fun AdjustmentsPanel(
             AdjustTab.ADJUSTMENTS -> {
                 // Per-adjustment live thumbnails: tapping one selects
                 // that adjustment for the single main slider below.
+                // v0.2.2 strip fix: Express's row is clean because
+                // every item is the SAME geometry. Ours was ragged:
+                // item width followed the label text, so long labels
+                // ("Reduce Color Noise") wrapped to two lines, making
+                // items uneven heights and uneven gaps — which also
+                // made the fling feel stiffer (variable item widths
+                // make fling distance inconsistent). Fixed 84dp-wide
+                // items, one 10dp gutter, single-line labels with
+                // ellipsis, thumbs on one baseline. The row itself
+                // was already a LazyRow with native spline fling; the
+                // ragged geometry, not the container, was the problem.
+                val stripState = rememberLazyListState()
                 LazyRow(
+                    state = stripState,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth()
@@ -490,7 +842,7 @@ fun AdjustmentsPanel(
                         val value = spec.get(adj)
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.clickable { selectedSpec = spec }
+                            modifier = Modifier.width(84.dp).clickable { selectedSpec = spec }
                         ) {
                             Box(
                                 modifier = Modifier
@@ -514,13 +866,16 @@ fun AdjustmentsPanel(
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 spec.name,
-                                fontSize = 11.sp,
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                                 color = if (selected) Color.White else Color(0xFFBDBDBD),
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
                             )
                             Text(
                                 formatSliderValue(value),
                                 fontSize = 11.sp,
+                                maxLines = 1,
                                 color = if (value != 0f) Accent else Color(0xFF9E9E9E)
                             )
                         }
@@ -536,67 +891,72 @@ fun AdjustmentsPanel(
                 }
             }
             AdjustTab.SPLIT_TONE -> {
-                LazyColumn(Modifier.heightIn(max = 300.dp).padding(horizontal = 16.dp)) {
-                    item {
+                // Express pattern: icon chips pick the parameter, one
+                // shared slider controls it (was four stacked sliders).
+                var param by remember { mutableStateOf(SPLIT_TONE_PARAMS[0]) }
+                Column {
+                    ParamChips(
+                        options = SPLIT_TONE_PARAMS.map {
+                            ParamOption(
+                                it.label,
+                                dot = if (it.label.startsWith("Shadow")) Color(0xFF37474F)
+                                else Color(0xFFFFB74D)
+                            )
+                        },
+                        selected = param.label,
+                        onSelect = { name ->
+                            SPLIT_TONE_PARAMS.firstOrNull { it.label == name }?.let { param = it }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Box(Modifier.padding(horizontal = 16.dp)) {
                         ToolSlider(
-                            "Shadow Hue", splitTone.shadowHue, 0f..360f,
-                            { onDraftSplitTone(splitTone.copy(shadowHue = it)) }, onCommit,
-                            format = { "${it.toInt()}°" }
-                        )
-                        ToolSlider(
-                            "Shadow Saturation", splitTone.shadowSat, 0f..100f,
-                            { onDraftSplitTone(splitTone.copy(shadowSat = it)) }, onCommit
-                        )
-                        ToolSlider(
-                            "Highlight Hue", splitTone.highlightHue, 0f..360f,
-                            { onDraftSplitTone(splitTone.copy(highlightHue = it)) }, onCommit,
-                            format = { "${it.toInt()}°" }
-                        )
-                        ToolSlider(
-                            "Highlight Saturation", splitTone.highlightSat, 0f..100f,
-                            { onDraftSplitTone(splitTone.copy(highlightSat = it)) }, onCommit
+                            param.label, param.get(splitTone), param.range,
+                            { onDraftSplitTone(param.set(splitTone, it)) }, onCommit,
+                            format = param.format
                         )
                     }
                 }
             }
             AdjustTab.COLOR_MIX -> {
+                // Express pattern: colour-dot chips pick the channel,
+                // parameter chips pick Hue/Saturation/Luminance, one
+                // shared slider controls the (channel, parameter) pair
+                // (was channel chips + three stacked sliders).
                 var channel by remember { mutableStateOf(0) }
+                var mixParam by remember { mutableStateOf("Hue") }
                 Column {
-                    ModeChips(
-                        options = ColorMath.MIX_CHANNELS.map { it.first },
+                    ParamChips(
+                        options = ColorMath.MIX_CHANNELS.map {
+                            ParamOption(it.first, dot = channelDotColor(it.second.centre))
+                        },
                         selected = ColorMath.MIX_CHANNELS[channel].first,
                         onSelect = { name ->
                             channel = ColorMath.MIX_CHANNELS.indexOfFirst { it.first == name }.coerceAtLeast(0)
                         },
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Column(Modifier.padding(horizontal = 16.dp)) {
+                    ModeChips(
+                        options = listOf("Hue", "Saturation", "Luminance"),
+                        selected = mixParam,
+                        onSelect = { mixParam = it },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        val cur = when (mixParam) {
+                            "Saturation" -> colorMix.sat[channel]
+                            "Luminance" -> colorMix.lum[channel]
+                            else -> colorMix.hue[channel]
+                        }
                         ToolSlider(
-                            "Hue", colorMix.hue[channel], -100f..100f,
+                            mixParam, cur, -100f..100f,
                             { v ->
                                 onDraftColorMix(
                                     colorMix.withChannel(
-                                        channel, v, colorMix.sat[channel], colorMix.lum[channel]
-                                    )
-                                )
-                            }, onCommit
-                        )
-                        ToolSlider(
-                            "Saturation", colorMix.sat[channel], -100f..100f,
-                            { v ->
-                                onDraftColorMix(
-                                    colorMix.withChannel(
-                                        channel, colorMix.hue[channel], v, colorMix.lum[channel]
-                                    )
-                                )
-                            }, onCommit
-                        )
-                        ToolSlider(
-                            "Luminance", colorMix.lum[channel], -100f..100f,
-                            { v ->
-                                onDraftColorMix(
-                                    colorMix.withChannel(
-                                        channel, colorMix.hue[channel], colorMix.sat[channel], v
+                                        channel,
+                                        if (mixParam == "Hue") v else colorMix.hue[channel],
+                                        if (mixParam == "Saturation") v else colorMix.sat[channel],
+                                        if (mixParam == "Luminance") v else colorMix.lum[channel]
                                     )
                                 )
                             }, onCommit
@@ -605,7 +965,15 @@ fun AdjustmentsPanel(
                 }
             }
             AdjustTab.BLUR -> {
-                Column(Modifier.padding(horizontal = 16.dp)) {
+                // Mode chips (None/Full/Radial) stay; the parameters
+                // become icon chips + one shared slider (was stacked
+                // sliders). Width/Height only apply to the Radial ellipse.
+                var param by remember { mutableStateOf(BLUR_PARAMS[0]) }
+                val visibleParams =
+                    if (blur.mode == BlurMode.RADIAL) BLUR_PARAMS else listOf(BLUR_PARAMS[0])
+                val shownParam =
+                    visibleParams.firstOrNull { it.label == param.label } ?: BLUR_PARAMS[0]
+                Column {
                     ModeChips(
                         options = listOf("None", "Full", "Radial"),
                         selected = when (blur.mode) {
@@ -627,55 +995,55 @@ fun AdjustmentsPanel(
                         },
                         modifier = Modifier.fillMaxWidth()
                     )
-                    ToolSlider(
-                        "Amount", blur.amount, 0f..100f,
-                        { onDraftBlur(blur.copy(amount = it)) }, onCommit
-                    )
                     if (blur.mode == BlurMode.RADIAL) {
                         Text(
                             "Drag the photo to move the blur ellipse; sliders set its shape.",
                             fontSize = 12.sp, color = Color(0xFF9E9E9E),
-                            modifier = Modifier.padding(bottom = 4.dp)
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
                         )
+                    }
+                    ParamChips(
+                        options = visibleParams.map {
+                            ParamOption(it.label, icon = blurIconFor(it.label))
+                        },
+                        selected = shownParam.label,
+                        onSelect = { name ->
+                            BLUR_PARAMS.firstOrNull { it.label == name }?.let { param = it }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Box(Modifier.padding(horizontal = 16.dp)) {
                         ToolSlider(
-                            "Feather", blur.feather, 0f..100f,
-                            { onDraftBlur(blur.copy(feather = it)) }, onCommit
-                        )
-                        ToolSlider(
-                            "Roundness", blur.roundness, -100f..100f,
-                            { onDraftBlur(blur.copy(roundness = it)) }, onCommit
-                        )
-                        ToolSlider(
-                            "Width", blur.rx * 100f, 5f..100f,
-                            { onDraftBlur(blur.copy(rx = it / 100f)) }, onCommit,
-                            format = { "${it.toInt()}%" }
-                        )
-                        ToolSlider(
-                            "Height", blur.ry * 100f, 5f..100f,
-                            { onDraftBlur(blur.copy(ry = it / 100f)) }, onCommit,
-                            format = { "${it.toInt()}%" }
+                            shownParam.label, shownParam.get(blur), shownParam.range,
+                            { onDraftBlur(shownParam.set(blur, it)) }, onCommit,
+                            format = shownParam.format
                         )
                     }
                 }
             }
             AdjustTab.VIGNETTE -> {
-                Column(Modifier.padding(horizontal = 16.dp)) {
-                    ToolSlider(
-                        "Amount", vignette.amount, -100f..100f,
-                        { onDraftVignette(vignette.copy(amount = it)) }, onCommit
+                // Express pattern: four icon chips (Amount, Mid Point,
+                // Feather, Roundness) above ONE shared slider (was four
+                // stacked labeled sliders). Amount keeps +100..-100.
+                var param by remember { mutableStateOf(VIGNETTE_PARAMS[0]) }
+                Column {
+                    ParamChips(
+                        options = VIGNETTE_PARAMS.map {
+                            ParamOption(it.label, icon = vignetteIconFor(it.label))
+                        },
+                        selected = param.label,
+                        onSelect = { name ->
+                            VIGNETTE_PARAMS.firstOrNull { it.label == name }?.let { param = it }
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     )
-                    ToolSlider(
-                        "Mid Point", vignette.midPoint, 0f..100f,
-                        { onDraftVignette(vignette.copy(midPoint = it)) }, onCommit
-                    )
-                    ToolSlider(
-                        "Feather", vignette.feather, 0f..100f,
-                        { onDraftVignette(vignette.copy(feather = it)) }, onCommit
-                    )
-                    ToolSlider(
-                        "Roundness", vignette.roundness, -100f..100f,
-                        { onDraftVignette(vignette.copy(roundness = it)) }, onCommit
-                    )
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        ToolSlider(
+                            param.label, param.get(vignette), param.range,
+                            { onDraftVignette(param.set(vignette, it)) }, onCommit,
+                            format = param.format
+                        )
+                    }
                 }
             }
             AdjustTab.OPTICS -> {

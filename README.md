@@ -24,6 +24,73 @@ The interface recreates Photoshop Express's layout and flow with original
 artwork — no Adobe code, assets or logos. PhotoCraft Express is **not
 affiliated with or endorsed by storytold/ArtCraft or Adobe Inc.**
 
+## What changed in v0.2.2 (correction release)
+
+- **Live sliders, actually fixed this time** — v0.2.1's "live sliders"
+  did not work on a real phone: effects still only landed on release.
+  The v0.2.1 theory (full-res render, no cancellation) was not the real
+  break. The real break: the preview effect restarted — cancelling the
+  in-flight render — on every drag tick, and drag ticks arrive faster
+  than one render completes, so every render died before finishing and
+  only the release value ever surfaced. v0.2.2 replaces that with a
+  conflated render worker: drag values are offered to a conflated flow
+  (only the latest survives) and a single worker renders each queued
+  value to completion, so the canvas advances at render rate throughout
+  the drag. The 1024px preview base is also cached instead of being
+  rebuilt from the full-resolution source on every render. Undo history
+  still commits once, on release. (Honest residual: the worker is
+  verified at code level and by a unit test proving intermediate drag
+  values publish; the feel of it on a physical phone is still the final
+  gate, as with every preview change.)
+- **Vignette / Split Tone / Color Mix / Blur tabs, restructured to
+  Express's pattern** — icon chips pick the parameter and ONE shared
+  slider controls it (was stacked labeled sliders). Vignette: Amount,
+  Mid Point, Feather, Roundness chips with small icons; Amount keeps
+  its +100..-100 range. Split Tone: Shadow Hue/Saturation and
+  Highlight Hue/Saturation chips. Color Mix: colour-dot channel chips
+  plus Hue/Saturation/Luminance chips, one slider for the pair. Blur:
+  mode chips (None/Full/Radial) stay, parameters become icon chips +
+  one slider (Width/Height Radial-only, as before).
+- **Adjustment thumbnail strip, cleaned up** — every item is now the
+  same fixed width with one consistent gutter and single-line labels
+  (no more two-line wraps for "Reduce Color Noise" making items uneven
+  heights), thumbnails aligned on one baseline. The row was already a
+  lazy row with native fling; the ragged variable-width items were
+  what made the glide feel stiff and uneven, so the uniform geometry
+  is the fix. All 18 adjustments remain reachable by scrolling.
+- **Thumbnail demo renders, verified visible** — a new test renders
+  every strip thumbnail's demo adjustment against a photo-like
+  synthetic scene and requires a visible difference from the base
+  image, so a silently unapplied demo render can no longer ship.
+- **Looks catalog, expanded to Express's breadth (87 presets, 13
+  categories)** — Normal (7), Free (6), HDR (7), Charm (6), Black &
+  White (8), Portrait (6), Matte (6), White Balance (6), Splash (7),
+  Nature (6), Light (7), Warm (7), Duo Tone (8). The original 15
+  presets are kept with their recipes unchanged (Fade and Matte moved
+  from the old Faded group into Matte, the matching Express category).
+  Every recipe is an original parameter combination through our own
+  engine — no Adobe preset data, LUTs or artwork. The engine grew to
+  express them: Looks now carry split tone, grain, vignette, color
+  mix, clarity, texture and dehaze, which ADD to the user's panel
+  values (same as temperature/tint already did), all scaled by the
+  intensity slider; the Subject/Background mask base carries the
+  Look's stages too, so the mask gates panel edits, never the Look.
+  Splash is a real selective-colour grade (ColorMix desaturates every
+  channel except the pop channel); Duo Tone is B&W plus a shadow /
+  highlight tint pair. Honest approximations, noted not hidden:
+  Portrait glamour softness is fade + low contrast (no blur-based
+  skin softening in the engine); B&W Infrared is high contrast with
+  crushed blacks (no true infrared channel response); complex
+  color-grade LUTs are approximated by tone curves + split tone.
+- **Looks strip, restructured to Express's model** — one continuous
+  strip across all categories (no more per-category strips): scrolling
+  flows Normal → … → Duo Tone, the category tab row auto-tracks the
+  strip position, and tapping a tab jumps the strip to that category.
+  The catalog expansion slots into this structure by extending the
+  category list. Thumbnails render lazily — only visible items plus
+  immediate neighbours, cached — so the 87-preset strip still scrolls
+  smoothly; nothing renders eagerly on photo load any more.
+
 ## What changed in v0.2.1 (fidelity polish)
 
 - **Adjustments panel, restructured to Express 1:1** — a mask selector
