@@ -7,16 +7,21 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,9 +52,33 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The app chrome is dark at every API level, so keep the system-bar
+        // icons light, and draw edge-to-edge: the root layout in AppRoot
+        // applies the safe-drawing insets itself (see below).
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
         setContent {
             PhotoCraftExpressTheme {
-                AppRoot()
+                // One inset gate for the whole app (field report, v0.1.0:
+                // the editor's top bar rendered underneath the status bar
+                // and camera cutout). The window is edge-to-edge, so every
+                // screen lives inside this padded box: nothing interactive
+                // can render under the status bar, the display cutout or
+                // the gesture/navigation bar, on Home, in the Editor, or on
+                // the loading screen. The box paints AppBg full-bleed so
+                // the strips behind the system bars match the app chrome.
+                // (The export ModalBottomSheet is a separate window and
+                // handles its own navigation-bar padding.)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(AppBg)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
+                ) {
+                    AppRoot()
+                }
             }
         }
     }

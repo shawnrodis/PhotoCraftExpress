@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -393,7 +394,9 @@ fun EditorScreen(
 
     if (showExportSheet) {
         ModalBottomSheet(onDismissRequest = { showExportSheet = false }) {
-            Column(Modifier.padding(bottom = 28.dp)) {
+            // The sheet is its own window, outside the root inset gate in
+            // MainActivity: keep its actions clear of the navigation bar.
+            Column(Modifier.navigationBarsPadding().padding(bottom = 12.dp)) {
                 ListItem(
                     headlineContent = { Text("Save a copy") },
                     supportingContent = { Text("Full-resolution JPEG in Pictures/PhotoCraftExpress") },
