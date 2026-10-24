@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -52,18 +53,32 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shawnrodis.photocraftexpress.engine.Adjustments
+import com.shawnrodis.photocraftexpress.engine.BlurFx
+import com.shawnrodis.photocraftexpress.engine.BlurMode
+import com.shawnrodis.photocraftexpress.engine.ColorMix
 import com.shawnrodis.photocraftexpress.engine.Looks
+import com.shawnrodis.photocraftexpress.engine.SplitTone
+import com.shawnrodis.photocraftexpress.engine.Vignette
+import com.shawnrodis.photocraftexpress.engine.ColorMath
 
-/** The bottom tool carousel, in Photoshop Express's order. */
-enum class EditorTool(val label: String, val icon: ImageVector, val implemented: Boolean) {
-    Looks("Looks", LooksIcon, true),
-    Crop("Crop", CropIcon, true),
-    Adjust("Adjust", AdjustIcon, true),
-    Healing("Healing", HealingIcon, false),
-    Effects("Effects", EffectsIcon, false),
-    Text("Text", TextIcon, false),
-    Borders("Borders", BordersIcon, false),
-    Resize("Resize", ResizeIcon, false)
+/** The bottom tool carousel, in Photoshop Express's order and names. */
+enum class EditorTool(val label: String, val icon: ImageVector) {
+    Looks("Looks", LooksIcon),
+    Adjustments("Adjustments", AdjustIcon),
+    Heal("Heal", HealingIcon),
+    Crop("Crop", CropIcon),
+    Smooth("Smooth", SmoothIcon),
+    Face("Face", FaceIcon),
+    Reshape("Reshape", ReshapeIcon),
+    Makeup("Makeup", MakeupIcon),
+    Draw("Draw", DrawIcon),
+    Background("Background", BackgroundIcon),
+    InsertObjects("Insert Objects", InsertIcon),
+    Overlays("Overlays", OverlaysIcon),
+    Text("Text", TextIcon),
+    Stickers("Stickers", StickersIcon),
+    Borders("Borders", BordersIcon),
+    Eyes("Eyes", EyesIcon)
 }
 
 /** Crop aspect choices; [ratio] null means "no fixed ratio". */
@@ -82,11 +97,116 @@ val ASPECT_CHIPS: List<Pair<String, AspectSel>> = listOf(
     "16:9" to AspectSel.Fixed(16f / 9f),
     "9:16" to AspectSel.Fixed(9f / 16f),
     "3:4" to AspectSel.Fixed(3f / 4f),
-    "2:3" to AspectSel.Fixed(2f / 3f)
+    "2:3" to AspectSel.Fixed(2f / 3f),
+    "1.91:1" to AspectSel.Fixed(1.91f),
+    "4:5" to AspectSel.Fixed(4f / 5f)
 )
 
+/** Crop panel tabs, mirroring Express: aspect ratio, rotate, transform. */
+enum class CropTab { ASPECT, ROTATE, TRANSFORM }
+
 // ----------------------------------------------------------------------
-// Looks
+// Shared panel pieces
+// ----------------------------------------------------------------------
+
+fun formatSliderValue(v: Float): String = when {
+    v > 0.5f -> "+${v.toInt()}"
+    v < -0.5f -> "${v.toInt()}"
+    else -> "0"
+}
+
+/** A labelled slider row, always visible (used by the v0.2.0 tool panels). */
+@Composable
+fun ToolSlider(
+    label: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onDraft: (Float) -> Unit,
+    onCommit: () -> Unit,
+    modifier: Modifier = Modifier,
+    format: (Float) -> String = ::formatSliderValue
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 14.sp, color = Color.White, modifier = Modifier.weight(1f))
+            if (value != 0f && range.start != 0f) {
+                IconButton(
+                    onClick = { onDraft(0f); onCommit() },
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    Icon(
+                        Icons.Filled.RestartAlt,
+                        contentDescription = "Reset $label",
+                        tint = Color(0xFFBDBDBD),
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+            Text(
+                format(value),
+                fontSize = 13.sp,
+                color = if (value != 0f) Accent else Color(0xFF9E9E9E),
+                modifier = Modifier.width(44.dp)
+            )
+        }
+        Slider(
+            value = value,
+            onValueChange = onDraft,
+            onValueChangeFinished = onCommit,
+            valueRange = range,
+            colors = SliderDefaults.colors(
+                thumbColor = Accent,
+                activeTrackColor = Accent,
+                inactiveTrackColor = Color(0xFF4A4A4A)
+            )
+        )
+    }
+}
+
+/** A horizontal chip row for panel tabs / modes. */
+@Composable
+fun ModeChips(
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier
+    ) {
+        items(options, key = { it }) { option ->
+            FilterChip(
+                selected = option == selected,
+                onClick = { onSelect(option) },
+                label = { Text(option, fontSize = 13.sp) },
+                colors = FilterChipDefaults.filterChipColors(
+                    containerColor = Color(0xFF2A2A2A),
+                    labelColor = Color(0xFFE0E0E0),
+                    selectedContainerColor = Accent,
+                    selectedLabelColor = Color.White
+                ),
+                border = null
+            )
+        }
+    }
+}
+
+@Composable
+fun PanelColumn(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = modifier
+            .background(PanelBg)
+            .fillMaxWidth()
+            .heightIn(max = 380.dp)
+            .padding(vertical = 6.dp),
+        content = content
+    )
+}
+
+// ----------------------------------------------------------------------
+// Looks (with categories)
 // ----------------------------------------------------------------------
 
 @Composable
@@ -99,12 +219,27 @@ fun LooksPanel(
     onIntensityCommit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var category by remember { mutableStateOf(Looks.CATEGORIES.firstOrNull()?.first ?: "Normal") }
+    val looksInCategory = Looks.CATEGORIES.firstOrNull { it.first == category }?.second
+        ?: Looks.ALL
+    // Keep the selected look's category in view.
+    val selectedCategory = Looks.CATEGORIES.firstOrNull { (_, looks) ->
+        looks.any { it.id == selectedLookId }
+    }?.first
+    if (selectedCategory != null && selectedCategory != category) {
+        category = selectedCategory
+    }
     Column(modifier = modifier.background(PanelBg)) {
+        ModeChips(
+            options = Looks.CATEGORIES.map { it.first },
+            selected = category,
+            onSelect = { category = it }
+        )
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            items(Looks.ALL, key = { it.id }) { look ->
+            items(looksInCategory, key = { it.id }) { look ->
                 val selected = look.id == selectedLookId
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
@@ -167,7 +302,7 @@ fun LooksPanel(
 }
 
 // ----------------------------------------------------------------------
-// Adjust
+// Adjustments (tabs: Adjustments / Split Tone / Color Mix / Blur / Vignette)
 // ----------------------------------------------------------------------
 
 private data class SliderSpec(
@@ -177,7 +312,7 @@ private data class SliderSpec(
     val set: (Adjustments, Float) -> Adjustments
 )
 
-private val SLIDER_SPECS: List<SliderSpec> = listOf(
+private val ADJUST_SLIDER_SPECS: List<SliderSpec> = listOf(
     SliderSpec("Exposure", -100f..100f, { it.exposure }, { a, v -> a.copy(exposure = v) }),
     SliderSpec("Contrast", -100f..100f, { it.contrast }, { a, v -> a.copy(contrast = v) }),
     SliderSpec("Highlights", -100f..100f, { it.highlights }, { a, v -> a.copy(highlights = v) }),
@@ -188,146 +323,359 @@ private val SLIDER_SPECS: List<SliderSpec> = listOf(
     SliderSpec("Tint", -100f..100f, { it.tint }, { a, v -> a.copy(tint = v) }),
     SliderSpec("Vibrance", -100f..100f, { it.vibrance }, { a, v -> a.copy(vibrance = v) }),
     SliderSpec("Saturation", -100f..100f, { it.saturation }, { a, v -> a.copy(saturation = v) }),
-    SliderSpec("Sharpen", 0f..100f, { it.sharpen }, { a, v -> a.copy(sharpen = v) })
+    SliderSpec("Sharpen", 0f..100f, { it.sharpen }, { a, v -> a.copy(sharpen = v) }),
+    SliderSpec("Texture", -100f..100f, { it.texture }, { a, v -> a.copy(texture = v) }),
+    SliderSpec("Clarity", -100f..100f, { it.clarity }, { a, v -> a.copy(clarity = v) }),
+    SliderSpec("Dehaze", -100f..100f, { it.dehaze }, { a, v -> a.copy(dehaze = v) }),
+    SliderSpec("Reduce Color Noise", 0f..100f, { it.reduceColorNoise }, { a, v -> a.copy(reduceColorNoise = v) }),
+    SliderSpec("Reduce Luminance Noise", 0f..100f, { it.reduceLuminanceNoise }, { a, v -> a.copy(reduceLuminanceNoise = v) }),
+    SliderSpec("Fade", -100f..100f, { it.fade }, { a, v -> a.copy(fade = v) }),
+    SliderSpec("Grain", 0f..100f, { it.grain }, { a, v -> a.copy(grain = v) })
 )
 
-private fun formatSliderValue(v: Float): String = when {
-    v > 0.5f -> "+${v.toInt()}"
-    v < -0.5f -> "${v.toInt()}"
-    else -> "0"
-}
+enum class AdjustTab { ADJUSTMENTS, SPLIT_TONE, COLOR_MIX, BLUR, VIGNETTE }
 
 @Composable
-fun AdjustPanel(
+fun AdjustmentsPanel(
     adj: Adjustments,
-    onDraft: (Adjustments) -> Unit,
+    splitTone: SplitTone,
+    colorMix: ColorMix,
+    blur: BlurFx,
+    vignette: Vignette,
+    adjustTab: AdjustTab,
+    onAdjustTab: (AdjustTab) -> Unit,
+    onDraftAdj: (Adjustments) -> Unit,
+    onDraftSplitTone: (SplitTone) -> Unit,
+    onDraftColorMix: (ColorMix) -> Unit,
+    onDraftBlur: (BlurFx) -> Unit,
+    onDraftVignette: (Vignette) -> Unit,
     onCommit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var expanded by remember { mutableStateOf<String?>(null) }
-    LazyColumn(
-        modifier = modifier
-            .background(PanelBg)
-            .heightIn(max = 336.dp)
-    ) {
-        items(SLIDER_SPECS, key = { it.name }) { spec ->
-            val value = spec.get(adj)
-            val isExpanded = expanded == spec.name
-            Column {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
+    Column(modifier = modifier.background(PanelBg)) {
+        ModeChips(
+            options = listOf("Adjustments", "Split Tone", "Color Mix", "Blur", "Vignette"),
+            selected = when (adjustTab) {
+                AdjustTab.ADJUSTMENTS -> "Adjustments"
+                AdjustTab.SPLIT_TONE -> "Split Tone"
+                AdjustTab.COLOR_MIX -> "Color Mix"
+                AdjustTab.BLUR -> "Blur"
+                AdjustTab.VIGNETTE -> "Vignette"
+            },
+            onSelect = {
+                onAdjustTab(
+                    when (it) {
+                        "Split Tone" -> AdjustTab.SPLIT_TONE
+                        "Color Mix" -> AdjustTab.COLOR_MIX
+                        "Blur" -> AdjustTab.BLUR
+                        "Vignette" -> AdjustTab.VIGNETTE
+                        else -> AdjustTab.ADJUSTMENTS
+                    }
+                )
+            }
+        )
+        when (adjustTab) {
+            AdjustTab.ADJUSTMENTS -> {
+                var expanded by remember { mutableStateOf<String?>(null) }
+                LazyColumn(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { expanded = if (isExpanded) null else spec.name }
-                        .padding(horizontal = 16.dp, vertical = 13.dp)
+                        .heightIn(max = 300.dp)
                 ) {
-                    Text(
-                        spec.name,
-                        fontSize = 14.sp,
-                        color = Color.White,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (value != 0f) {
-                        IconButton(
-                            onClick = { onDraft(spec.set(adj, 0f)); onCommit() },
-                            modifier = Modifier.size(28.dp)
-                        ) {
-                            Icon(
-                                Icons.Filled.RestartAlt,
-                                contentDescription = "Reset ${spec.name}",
-                                tint = Color(0xFFBDBDBD),
-                                modifier = Modifier.size(17.dp)
+                    items(ADJUST_SLIDER_SPECS, key = { it.name }) { spec ->
+                        val value = spec.get(adj)
+                        val isExpanded = expanded == spec.name
+                        Column {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { expanded = if (isExpanded) null else spec.name }
+                                    .padding(horizontal = 16.dp, vertical = 13.dp)
+                            ) {
+                                Text(spec.name, fontSize = 14.sp, color = Color.White, modifier = Modifier.weight(1f))
+                                if (value != 0f) {
+                                    IconButton(
+                                        onClick = { onDraftAdj(spec.set(adj, 0f)); onCommit() },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.RestartAlt,
+                                            contentDescription = "Reset ${spec.name}",
+                                            tint = Color(0xFFBDBDBD),
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    formatSliderValue(value),
+                                    fontSize = 13.sp,
+                                    color = if (value != 0f) Accent else Color(0xFF9E9E9E),
+                                    modifier = Modifier.width(36.dp)
+                                )
+                                Icon(
+                                    if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                    contentDescription = null,
+                                    tint = Color(0xFF9E9E9E),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            if (isExpanded) {
+                                Slider(
+                                    value = value,
+                                    onValueChange = { onDraftAdj(spec.set(adj, it)) },
+                                    onValueChangeFinished = onCommit,
+                                    valueRange = spec.range,
+                                    colors = SliderDefaults.colors(
+                                        thumbColor = Accent,
+                                        activeTrackColor = Accent,
+                                        inactiveTrackColor = Color(0xFF4A4A4A)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp)
+                                )
+                            }
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(0.7.dp)
+                                    .background(Color(0xFF2C2C2C))
                             )
                         }
                     }
-                    Text(
-                        formatSliderValue(value),
-                        fontSize = 13.sp,
-                        color = if (value != 0f) Accent else Color(0xFF9E9E9E),
-                        modifier = Modifier.width(36.dp)
+                }
+            }
+            AdjustTab.SPLIT_TONE -> {
+                LazyColumn(Modifier.heightIn(max = 300.dp).padding(horizontal = 16.dp)) {
+                    item {
+                        ToolSlider(
+                            "Shadow Hue", splitTone.shadowHue, 0f..360f,
+                            { onDraftSplitTone(splitTone.copy(shadowHue = it)) }, onCommit,
+                            format = { "${it.toInt()}°" }
+                        )
+                        ToolSlider(
+                            "Shadow Saturation", splitTone.shadowSat, 0f..100f,
+                            { onDraftSplitTone(splitTone.copy(shadowSat = it)) }, onCommit
+                        )
+                        ToolSlider(
+                            "Highlight Hue", splitTone.highlightHue, 0f..360f,
+                            { onDraftSplitTone(splitTone.copy(highlightHue = it)) }, onCommit,
+                            format = { "${it.toInt()}°" }
+                        )
+                        ToolSlider(
+                            "Highlight Saturation", splitTone.highlightSat, 0f..100f,
+                            { onDraftSplitTone(splitTone.copy(highlightSat = it)) }, onCommit
+                        )
+                    }
+                }
+            }
+            AdjustTab.COLOR_MIX -> {
+                var channel by remember { mutableStateOf(0) }
+                Column {
+                    ModeChips(
+                        options = ColorMath.MIX_CHANNELS.map { it.first },
+                        selected = ColorMath.MIX_CHANNELS[channel].first,
+                        onSelect = { name ->
+                            channel = ColorMath.MIX_CHANNELS.indexOfFirst { it.first == name }.coerceAtLeast(0)
+                        }
                     )
-                    Icon(
-                        if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = null,
-                        tint = Color(0xFF9E9E9E),
-                        modifier = Modifier.size(20.dp)
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        ToolSlider(
+                            "Hue", colorMix.hue[channel], -100f..100f,
+                            { v ->
+                                onDraftColorMix(
+                                    colorMix.withChannel(
+                                        channel, v, colorMix.sat[channel], colorMix.lum[channel]
+                                    )
+                                )
+                            }, onCommit
+                        )
+                        ToolSlider(
+                            "Saturation", colorMix.sat[channel], -100f..100f,
+                            { v ->
+                                onDraftColorMix(
+                                    colorMix.withChannel(
+                                        channel, colorMix.hue[channel], v, colorMix.lum[channel]
+                                    )
+                                )
+                            }, onCommit
+                        )
+                        ToolSlider(
+                            "Luminance", colorMix.lum[channel], -100f..100f,
+                            { v ->
+                                onDraftColorMix(
+                                    colorMix.withChannel(
+                                        channel, colorMix.hue[channel], colorMix.sat[channel], v
+                                    )
+                                )
+                            }, onCommit
+                        )
+                    }
+                }
+            }
+            AdjustTab.BLUR -> {
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    ModeChips(
+                        options = listOf("None", "Full", "Radial"),
+                        selected = when (blur.mode) {
+                            BlurMode.FULL -> "Full"
+                            BlurMode.RADIAL -> "Radial"
+                            BlurMode.NONE -> "None"
+                        },
+                        onSelect = {
+                            onDraftBlur(
+                                blur.copy(
+                                    mode = when (it) {
+                                        "Full" -> BlurMode.FULL
+                                        "Radial" -> BlurMode.RADIAL
+                                        else -> BlurMode.NONE
+                                    }
+                                )
+                            )
+                            onCommit()
+                        }
+                    )
+                    ToolSlider(
+                        "Amount", blur.amount, 0f..100f,
+                        { onDraftBlur(blur.copy(amount = it)) }, onCommit
+                    )
+                    if (blur.mode == BlurMode.RADIAL) {
+                        Text(
+                            "Drag the photo to move the blur ellipse; sliders set its shape.",
+                            fontSize = 12.sp, color = Color(0xFF9E9E9E),
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                        ToolSlider(
+                            "Feather", blur.feather, 0f..100f,
+                            { onDraftBlur(blur.copy(feather = it)) }, onCommit
+                        )
+                        ToolSlider(
+                            "Roundness", blur.roundness, -100f..100f,
+                            { onDraftBlur(blur.copy(roundness = it)) }, onCommit
+                        )
+                        ToolSlider(
+                            "Width", blur.rx * 100f, 5f..100f,
+                            { onDraftBlur(blur.copy(rx = it / 100f)) }, onCommit,
+                            format = { "${it.toInt()}%" }
+                        )
+                        ToolSlider(
+                            "Height", blur.ry * 100f, 5f..100f,
+                            { onDraftBlur(blur.copy(ry = it / 100f)) }, onCommit,
+                            format = { "${it.toInt()}%" }
+                        )
+                    }
+                }
+            }
+            AdjustTab.VIGNETTE -> {
+                Column(Modifier.padding(horizontal = 16.dp)) {
+                    ToolSlider(
+                        "Amount", vignette.amount, -100f..100f,
+                        { onDraftVignette(vignette.copy(amount = it)) }, onCommit
+                    )
+                    ToolSlider(
+                        "Mid Point", vignette.midPoint, 0f..100f,
+                        { onDraftVignette(vignette.copy(midPoint = it)) }, onCommit
+                    )
+                    ToolSlider(
+                        "Feather", vignette.feather, 0f..100f,
+                        { onDraftVignette(vignette.copy(feather = it)) }, onCommit
+                    )
+                    ToolSlider(
+                        "Roundness", vignette.roundness, -100f..100f,
+                        { onDraftVignette(vignette.copy(roundness = it)) }, onCommit
                     )
                 }
-                if (isExpanded) {
-                    Slider(
-                        value = value,
-                        onValueChange = { onDraft(spec.set(adj, it)) },
-                        onValueChangeFinished = onCommit,
-                        valueRange = spec.range,
-                        colors = SliderDefaults.colors(
-                            thumbColor = Accent,
-                            activeTrackColor = Accent,
-                            inactiveTrackColor = Color(0xFF4A4A4A)
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                    )
-                }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(0.7.dp)
-                        .background(Color(0xFF2C2C2C))
-                )
             }
         }
     }
 }
 
 // ----------------------------------------------------------------------
-// Crop
+// Crop (tabs: Aspect Ratio / Rotate / Transform)
 // ----------------------------------------------------------------------
 
 @Composable
 fun CropPanel(
     aspectSel: AspectSel,
+    cropTab: CropTab,
+    onCropTab: (CropTab) -> Unit,
     onAspectSelected: (AspectSel) -> Unit,
     onRotate: () -> Unit,
     onFlipH: () -> Unit,
     onFlipV: () -> Unit,
     onResetCrop: () -> Unit,
+    onResetTransform: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.background(PanelBg)) {
-        LazyRow(
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(ASPECT_CHIPS, key = { it.first }) { (label, sel) ->
-                val selected = when {
-                    sel is AspectSel.Fixed && aspectSel is AspectSel.Fixed -> sel.ratio == aspectSel.ratio
-                    else -> sel::class == aspectSel::class
-                }
-                FilterChip(
-                    selected = selected,
-                    onClick = { onAspectSelected(sel) },
-                    label = { Text(label, fontSize = 13.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        containerColor = Color(0xFF2A2A2A),
-                        labelColor = Color(0xFFE0E0E0),
-                        selectedContainerColor = Accent,
-                        selectedLabelColor = Color.White
-                    ),
-                    border = null
+        ModeChips(
+            options = listOf("Aspect Ratio", "Rotate", "Transform"),
+            selected = when (cropTab) {
+                CropTab.ASPECT -> "Aspect Ratio"
+                CropTab.ROTATE -> "Rotate"
+                CropTab.TRANSFORM -> "Transform"
+            },
+            onSelect = {
+                onCropTab(
+                    when (it) {
+                        "Rotate" -> CropTab.ROTATE
+                        "Transform" -> CropTab.TRANSFORM
+                        else -> CropTab.ASPECT
+                    }
                 )
             }
-        }
-        Row(
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 6.dp)
-        ) {
-            CropAction(Icons.Filled.RotateRight, "Rotate", onRotate)
-            CropAction(Icons.Filled.Flip, "Flip H", onFlipH)
-            CropAction(Icons.Filled.Flip, "Flip V", onFlipV, rotateIcon = true)
-            CropAction(Icons.Filled.RestartAlt, "Reset", onResetCrop)
+        )
+        when (cropTab) {
+            CropTab.ASPECT -> {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(ASPECT_CHIPS, key = { it.first }) { (label, sel) ->
+                        val selected = when {
+                            sel is AspectSel.Fixed && aspectSel is AspectSel.Fixed -> sel.ratio == aspectSel.ratio
+                            else -> sel::class == aspectSel::class
+                        }
+                        FilterChip(
+                            selected = selected,
+                            onClick = { onAspectSelected(sel) },
+                            label = { Text(label, fontSize = 13.sp) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                containerColor = Color(0xFF2A2A2A),
+                                labelColor = Color(0xFFE0E0E0),
+                                selectedContainerColor = Accent,
+                                selectedLabelColor = Color.White
+                            ),
+                            border = null
+                        )
+                    }
+                }
+            }
+            CropTab.ROTATE -> {
+                Row(
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 6.dp)
+                ) {
+                    CropAction(Icons.Filled.RotateRight, "Rotate", onRotate)
+                    CropAction(Icons.Filled.Flip, "Flip H", onFlipH)
+                    CropAction(Icons.Filled.Flip, "Flip V", onFlipV, rotateIcon = true)
+                    CropAction(Icons.Filled.RestartAlt, "Reset", onResetCrop)
+                }
+            }
+            CropTab.TRANSFORM -> {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    Text(
+                        "Drag the four corner handles on the photo to correct perspective (keystone).",
+                        fontSize = 13.sp, color = Color(0xFFE0E0E0)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = onResetTransform) {
+                        Text("Reset perspective", color = Accent)
+                    }
+                }
+            }
         }
     }
 }
@@ -346,40 +694,5 @@ private fun CropAction(icon: ImageVector, label: String, onClick: () -> Unit, ro
             )
             Text(label, fontSize = 11.sp, color = Color(0xFFE0E0E0))
         }
-    }
-}
-
-// ----------------------------------------------------------------------
-// Stub tools (present in the carousel, honestly not built yet)
-// ----------------------------------------------------------------------
-
-@Composable
-fun StubPanel(tool: EditorTool, modifier: Modifier = Modifier) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
-            .background(PanelBg)
-            .fillMaxWidth()
-            .padding(vertical = 22.dp, horizontal = 24.dp)
-    ) {
-        Icon(
-            tool.icon,
-            contentDescription = null,
-            tint = Color(0xFF8A8A8A),
-            modifier = Modifier.size(34.dp)
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "${tool.label} is coming in a future update.",
-            fontSize = 14.sp,
-            color = Color(0xFFE0E0E0),
-            fontWeight = FontWeight.Medium
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            "Not part of v0.1.0 yet — Looks, Crop and Adjust are fully working.",
-            fontSize = 12.sp,
-            color = Color(0xFF9E9E9E)
-        )
     }
 }

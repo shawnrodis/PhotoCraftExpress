@@ -7,6 +7,9 @@
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
+    <!-- In-app update checker: GitHub Releases API + APK download. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Legacy (API 26-28) export path writes via MediaStore on external storage. -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"

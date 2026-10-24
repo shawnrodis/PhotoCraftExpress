@@ -127,6 +127,24 @@ object Looks {
         )
     )
 
+    /**
+     * Looks categories, mirroring Express's grouped strip. Every preset
+     * belongs to exactly one category; Original lives in Normal.
+     */
+    val CATEGORIES: List<Pair<String, List<LookDef>>> by lazy {
+        val byIdMap = ALL.associateBy { it.id }
+        fun group(name: String, vararg ids: String) =
+            name to ids.mapNotNull { byIdMap[it] }
+        listOf(
+            group("Normal", "original", "vivid", "punch", "warm", "cool"),
+            group("Black & White", "mono", "noir"),
+            group("HDR", "drama", "chrome"),
+            group("Warm", "golden", "autumn"),
+            group("Light", "breeze", "pastel"),
+            group("Faded", "fade", "matte")
+        ).filter { it.second.isNotEmpty() }
+    }
+
     private val byId: Map<String, LookDef> = ALL.associateBy { it.id }
 
     fun byId(id: String): LookDef = byId[id] ?: ORIGINAL

@@ -1,430 +1,1764 @@
 package com.shawnrodis.photocraftexpress.ui
 
 import android.graphics.Bitmap
-import androidx.activity.compose.BackHandler
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathNode
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.shawnrodis.photocraftexpress.engine.Adjustments
+import com.shawnrodis.photocraftexpress.engine.AutoEnhance
+import com.shawnrodis.photocraftexpress.engine.BackgroundFx
+import com.shawnrodis.photocraftexpress.engine.BlurFx
+import com.shawnrodis.photocraftexpress.engine.BorderFx
+import com.shawnrodis.photocraftexpress.engine.ColorMix
 import com.shawnrodis.photocraftexpress.engine.CropGeometry
 import com.shawnrodis.photocraftexpress.engine.CropRect
+import com.shawnrodis.photocraftexpress.engine.DrawStroke
 import com.shawnrodis.photocraftexpress.engine.EditHistory
 import com.shawnrodis.photocraftexpress.engine.EditState
+import com.shawnrodis.photocraftexpress.engine.ExportSize
+import com.shawnrodis.photocraftexpress.engine.ExportSizeMode
+import com.shawnrodis.photocraftexpress.engine.FaceAdjust
+import com.shawnrodis.photocraftexpress.engine.FaceRenderData
+import com.shawnrodis.photocraftexpress.engine.HealMath
+import com.shawnrodis.photocraftexpress.engine.InsertedImage
 import com.shawnrodis.photocraftexpress.engine.Looks
+import com.shawnrodis.photocraftexpress.engine.MaskPoint
+import com.shawnrodis.photocraftexpress.engine.OverlayFx
 import com.shawnrodis.photocraftexpress.engine.PixelImage
 import com.shawnrodis.photocraftexpress.engine.PixelPipeline
+import com.shawnrodis.photocraftexpress.engine.RenderAssets
+import com.shawnrodis.photocraftexpress.engine.SplitTone
+import com.shawnrodis.photocraftexpress.engine.StickerItem
+import com.shawnrodis.photocraftexpress.engine.StickerKind
+import com.shawnrodis.photocraftexpress.engine.TextFont
+import com.shawnrodis.photocraftexpress.engine.TextItem
+import com.shawnrodis.photocraftexpress.engine.Vignette
+import com.shawnrodis.photocraftexpress.engine.WarpMath
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * The editor: dark chrome, canvas centred, undo/redo + hold-to-compare +
- * Export on top, the tool carousel along the bottom, and the active tool's
- * panel swapped in above the carousel — the Photoshop Express layout,
- * recreated with original artwork.
+ * The v0.2.0 editor: 16-tool carousel, canvas gestures for every brush /
+ * tap / drag tool, live preview rendered through the full pipeline, and
+ * an export sheet with output-size control. Undo/redo covers every edit:
+ * sliders commit on release, taps and chips commit immediately, drags
+ * commit once on release (live previews during a drag are drafts).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(
     source: PixelImage,
+    sourceUri: Uri,
     onBack: () -> Unit,
-    onExport: suspend (EditState, Boolean) -> String,
-    modifier: Modifier = Modifier
+    onCheckForUpdates: () -> Unit = {}
 ) {
-    val history = remember { EditHistory(EditState()) }
-    var state by remember { mutableStateOf(history.current) }
-    var historyTick by remember { mutableIntStateOf(0) }
-    var activeTool by remember { mutableStateOf(EditorTool.Looks) }
-    var aspectSel by remember { mutableStateOf<AspectSel>(AspectSel.Original) }
-    var showOriginal by remember { mutableStateOf(false) }
-    var showExportSheet by remember { mutableStateOf(false) }
-    var exporting by remember { mutableStateOf(false) }
-    val snackbar = remember { SnackbarHostState() }
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    fun commit(next: EditState) {
+    // --- Edit history -------------------------------------------------
+    val history = remember { EditHistory(EditState()) }
+    var tick by remember { mutableStateOf(0) }
+    var draft by remember { mutableStateOf<EditState?>(null) }
+    @Suppress("UNUSED_VARIABLE")
+    val historyTick = tick // read so recomposition follows history changes
+    val cur = draft ?: history.current
+    val curRef = rememberUpdatedState(cur)
+
+    fun draftTo(next: EditState) {
+        draft = next
+    }
+
+    fun commitDraft() {
+        val d = draft ?: return
+        history.commit(d)
+        draft = null
+        tick++
+    }
+
+    fun commitDirect(next: EditState) {
+        draft = null
         history.commit(next)
-        state = history.current
-        historyTick++
+        tick++
     }
 
-    fun commitCurrent() {
-        history.commit(state)
-        state = history.current
-        historyTick++
-    }
-
-    BackHandler { onBack() }
-
-    val cropMode = activeTool == EditorTool.Crop
-
-    var rendered by remember { mutableStateOf<Bitmap?>(null) }
-    LaunchedEffect(state, cropMode, source) {
-        val snapshot = state
-        val cm = cropMode
-        rendered = withContext(Dispatchers.Default) {
-            BitmapBridge.toBitmap(PixelPipeline.render(source, snapshot, applyCrop = !cm))
+    fun undo() {
+        if (history.undo() != null) {
+            draft = null
+            tick++
         }
     }
-    val originalBitmap = remember(source) { BitmapBridge.toBitmap(source) }
 
-    // Looks thumbnails: the current geometry at thumbnail size, once per look.
+    fun redo() {
+        if (history.redo() != null) {
+            draft = null
+            tick++
+        }
+    }
+
+    // --- Tool / panel state -------------------------------------------
+    var tool by remember { mutableStateOf(EditorTool.Looks) }
+    var adjustTab by remember { mutableStateOf(AdjustTab.ADJUSTMENTS) }
+    var cropTab by remember { mutableStateOf(CropTab.ASPECT) }
+    var aspectSel by remember { mutableStateOf<AspectSel>(AspectSel.Original) }
+    var textTab by remember { mutableStateOf(TextTab.STYLES) }
+    var borderTab by remember { mutableStateOf(BorderTab.BASIC) }
+    var insertMode by remember { mutableStateOf(InsertMode.PHOTO) }
+    var eyesMode by remember { mutableStateOf(EyesMode.ENHANCE) }
+    var reshapeMode by remember { mutableStateOf(WarpMath.BrushMode.PUSH) }
+    var reshapeBrush by remember { mutableStateOf(0.12f) }
+    var healBrush by remember { mutableStateOf(0.05f) }
+    var drawColor by remember { mutableStateOf(-0x1) }
+    var drawWidth by remember { mutableStateOf(0.02f) }
+    var drawOpacity by remember { mutableStateOf(1f) }
+    var insertBrush by remember { mutableStateOf(0.06f) }
+    var eyeBrush by remember { mutableStateOf(0.04f) }
+    var stickerKind by remember { mutableStateOf(StickerKind.STAR) }
+    var selTextId by remember { mutableStateOf<Long?>(null) }
+    var selStickerId by remember { mutableStateOf<Long?>(null) }
+    var selInsertedId by remember { mutableStateOf<Long?>(null) }
+    var nextLayerId by remember { mutableStateOf(1L) }
+    var pendingMask by remember { mutableStateOf<List<MaskPoint>>(emptyList()) }
+    var showOriginal by remember { mutableStateOf(false) }
+    var showExport by remember { mutableStateOf(false) }
+    var exporting by remember { mutableStateOf(false) }
+    var exportSize by remember { mutableStateOf(ExportSize()) }
+    var customW by remember { mutableStateOf("") }
+    var customH by remember { mutableStateOf("") }
+    // Export sheet settings (defaults match Express: JPEG at 85%).
+    var exportFormat by remember { mutableStateOf(ExportFormat.JPEG) }
+    var exportQuality by remember { mutableStateOf(Exporter.DEFAULT_QUALITY) }
+    var exportWatermark by remember { mutableStateOf(WatermarkStyle.NONE) }
+    // Top bar state: split compare, its divider, menu + About dialog.
+    var splitCompare by remember { mutableStateOf(false) }
+    val splitCompareRef = rememberUpdatedState(splitCompare)
+    var divider by remember { mutableStateOf(0.5f) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
+
+    // --- Source, analysis, preview -------------------------------------
+    val sourceBitmap = remember(source) { BitmapBridge.toBitmap(source) }
+    var analysis by remember { mutableStateOf<FaceAnalysis.Result?>(null) }
+    LaunchedEffect(sourceBitmap) {
+        analysis = FaceAnalysis.analyze(sourceBitmap)
+    }
+    val hasFace = analysis?.faces?.isNotEmpty() == true
+    val personFound = analysis?.personFound == true
+
+    var insertedBitmaps by remember { mutableStateOf<Map<String, Bitmap>>(emptyMap()) }
+
     var lookThumbs by remember { mutableStateOf<Map<String, Bitmap>>(emptyMap()) }
-    LaunchedEffect(source, state.rotation, state.flipH, state.flipV, state.crop) {
-        val geoState = EditState(
-            rotation = state.rotation,
-            flipH = state.flipH,
-            flipV = state.flipV,
-            crop = state.crop
-        )
+    LaunchedEffect(sourceBitmap) {
         lookThumbs = withContext(Dispatchers.Default) {
-            val base = BitmapBridge.downscale(PixelPipeline.applyGeometry(source, geoState), 168)
+            val small = BitmapBridge.downscale(BitmapBridge.toPixelImage(sourceBitmap), 240)
             Looks.ALL.associate { look ->
                 look.id to BitmapBridge.toBitmap(
-                    PixelPipeline.render(base, EditState(lookId = look.id, lookIntensity = 100f))
+                    PixelPipeline.render(
+                        small,
+                        EditState(lookId = look.id, lookIntensity = 100f)
+                    )
                 )
             }
         }
     }
 
-    // Display-frame (post-rotation) aspect, for crop aspect maths.
-    val rotated = state.rotation == 90 || state.rotation == 270
-    val frameW = if (rotated) source.height else source.width
-    val frameH = if (rotated) source.width else source.height
-    val frameAspect = frameW.toFloat() / frameH.toFloat()
-    val aspectNorm = (aspectSel as? AspectSel.Fixed)?.let { it.ratio / frameAspect }
+    // While the Crop tool is active the preview shows the uncropped photo
+    // (the crop overlay draws the rect) — except on the Transform tab,
+    // where the cropped + warped photo is the thing being edited.
+    val applyCrop = tool != EditorTool.Crop || cropTab == CropTab.TRANSFORM
 
-    Column(modifier = modifier.fillMaxSize().background(AppBg)) {
-        // ---- Top bar ----
+    var preview by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(cur, sourceBitmap, analysis, insertedBitmaps, applyCrop, tool) {
+        val out = withContext(Dispatchers.Default) {
+            val px = BitmapBridge.toPixelImage(sourceBitmap)
+            val faceData: FaceRenderData? = analysis?.faces?.firstOrNull()?.let {
+                FaceAnalysis.mapFace(
+                    it, cur, applyCrop,
+                    sourceBitmap.width.toFloat() / sourceBitmap.height
+                )
+            }
+            val rendered = PixelPipeline.render(
+                px, cur, applyCrop,
+                RenderAssets(faceData, analysis?.personMask)
+            )
+            var bmp = BitmapBridge.toBitmap(rendered)
+            // Layers live in the cropped frame; while cropping (uncropped
+            // preview) they would draw in the wrong place, so hide them.
+            if (tool != EditorTool.Crop) {
+                bmp = LayerComposite.composite(bmp, cur, insertedBitmaps)
+            }
+            bmp
+        }
+        preview = out
+    }
+
+    // Split-compare "before": the same geometry (rotation/flips/crop/
+    // transform) with every pixel and layer edit stripped, so before and
+    // after share dimensions and the divider lines up exactly. Only
+    // rendered while split compare is on, to avoid doubling render cost.
+    var beforeBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(
+        splitCompare, sourceBitmap,
+        cur.rotation, cur.flipH, cur.flipV, cur.crop, cur.transform
+    ) {
+        if (!splitCompare) {
+            beforeBitmap = null
+            return@LaunchedEffect
+        }
+        val geometryState = cur.copy(
+            lookId = Looks.ORIGINAL_ID, lookIntensity = 100f,
+            adj = Adjustments(), splitTone = SplitTone(), colorMix = ColorMix(),
+            blur = BlurFx(), vignette = Vignette(), smooth = 0f, face = FaceAdjust(),
+            warpOps = emptyList(), healSpots = emptyList(), eyeFixes = emptyList(),
+            drawStrokes = emptyList(), textItems = emptyList(),
+            stickerItems = emptyList(), insertedImages = emptyList(),
+            overlay = OverlayFx(), border = BorderFx(), background = BackgroundFx(),
+            makeupLip = 0f, makeupBlush = 0f, makeupShadow = 0f, makeupLiner = 0f,
+            eyesEnhance = 0f
+        )
+        beforeBitmap = withContext(Dispatchers.Default) {
+            BitmapBridge.toBitmap(
+                PixelPipeline.render(
+                    BitmapBridge.toPixelImage(sourceBitmap), geometryState, true
+                )
+            )
+        }
+    }
+
+    /** One-tap auto-enhance: histogram deltas applied as an undoable edit. */
+    fun autoEnhance() {
+        val base = preview ?: sourceBitmap
+        scope.launch {
+            val delta = withContext(Dispatchers.Default) {
+                AutoEnhance.deltasFor(BitmapBridge.toPixelImage(base))
+            }
+            val current = curRef.value
+            commitDirect(current.copy(adj = AutoEnhance.apply(current.adj, delta)))
+        }
+    }
+
+    /** Download button: straight to Gallery with the sheet's settings. */
+    fun quickSave() {
+        scope.launch {
+            val msg = withContext(Dispatchers.Default) {
+                Exporter.export(
+                    context, sourceUri, curRef.value, exportSize,
+                    exportFormat, exportQuality, exportWatermark, ExportAction.SAVE
+                )
+            }
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** ⋮ menu Reset: an undoable return to the untouched photo. */
+    fun resetEdits() {
+        commitDirect(EditState())
+        aspectSel = AspectSel.Original
+        selTextId = null
+        selStickerId = null
+        selInsertedId = null
+        splitCompare = false
+    }
+
+    // --- Insert photo picker -------------------------------------------
+    val insertPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            val id = nextLayerId++
+            val layer = InsertedImage(
+                id = id,
+                uri = uri.toString(),
+                x = 0.5f,
+                y = 0.5f,
+                scale = 0.5f,
+                maskStrokes = pendingMask
+            )
+            pendingMask = emptyList()
+            commitDirect(
+                curRef.value.copy(insertedImages = curRef.value.insertedImages + layer)
+            )
+            selInsertedId = id
+            scope.launch(Dispatchers.IO) {
+                val px = BitmapBridge.loadImage(context, uri, 1200)
+                if (px != null) {
+                    val bmp = BitmapBridge.toBitmap(px)
+                    insertedBitmaps = insertedBitmaps + (id.toString() to bmp)
+                }
+            }
+        }
+    }
+
+    // --- Canvas gestures ------------------------------------------------
+    // Drag bookkeeping (not State: only the draft EditState recomposes).
+    var dragBase by remember { mutableStateOf<EditState?>(null) }
+    var dragOps by remember { mutableStateOf<List<WarpMath.BrushOp>>(emptyList()) }
+    var dragLast by remember { mutableStateOf(0f to 0f) }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+
+    fun hitTest(x: Float, y: Float): Triple<String, Long, Float>? {
+        var best: Triple<String, Long, Float>? = null
+        fun consider(kind: String, id: Long, d: Float, threshold: Float) {
+            if (d < threshold && (best == null || d < best!!.third)) {
+                best = Triple(kind, id, d)
+            }
+        }
+        for (item in cur.insertedImages) {
+            val dx = x - item.x
+            val dy = y - item.y
+            if (kotlin.math.abs(dx) < item.scale * 0.6f && kotlin.math.abs(dy) < item.scale * 0.6f) {
+                consider("inserted", item.id, kotlin.math.abs(dx) + kotlin.math.abs(dy), 1f)
+            }
+        }
+        for (item in cur.textItems) {
+            val dx = x - item.x
+            val dy = y - item.y
+            val d = kotlin.math.sqrt(dx * dx + dy * dy)
+            consider("text", item.id, d, maxOf(0.12f, item.size * 1.2f))
+        }
+        for (item in cur.stickerItems) {
+            val dx = x - item.x
+            val dy = y - item.y
+            val d = kotlin.math.sqrt(dx * dx + dy * dy)
+            consider("sticker", item.id, d, item.scale)
+        }
+        return best
+    }
+
+    fun onCanvasTap(x: Float, y: Float) {
+        when (tool) {
+            EditorTool.Heal -> {
+                commitDirect(
+                    cur.copy(healSpots = cur.healSpots + HealMath.HealSpot(x, y, healBrush))
+                )
+            }
+            EditorTool.Eyes -> {
+                when (eyesMode) {
+                    EyesMode.RED_EYE -> commitDirect(
+                        cur.copy(eyeFixes = cur.eyeFixes + HealMath.EyeFix(x, y, eyeBrush, pet = false))
+                    )
+                    EyesMode.PET_EYE -> commitDirect(
+                        cur.copy(eyeFixes = cur.eyeFixes + HealMath.EyeFix(x, y, eyeBrush, pet = true))
+                    )
+                    EyesMode.ENHANCE -> Unit
+                }
+            }
+            EditorTool.Stickers -> {
+                val hit = hitTest(x, y)
+                if (hit != null && hit.first == "sticker") {
+                    selStickerId = hit.second
+                } else {
+                    val id = nextLayerId++
+                    commitDirect(
+                        cur.copy(
+                            stickerItems = cur.stickerItems +
+                                StickerItem(id = id, kind = stickerKind, x = x, y = y)
+                        )
+                    )
+                    selStickerId = id
+                }
+            }
+            EditorTool.Text -> {
+                val hit = hitTest(x, y)
+                selTextId = if (hit != null && hit.first == "text") hit.second else null
+            }
+            EditorTool.InsertObjects -> {
+                val hit = hitTest(x, y)
+                selInsertedId = if (hit != null && hit.first == "inserted") hit.second else null
+            }
+            else -> Unit
+        }
+    }
+
+    fun onCanvasDragStart(x: Float, y: Float) {
+        dragBase = cur
+        dragOps = emptyList()
+        dragLast = x to y
+        when (tool) {
+            EditorTool.Draw -> {
+                draftTo(
+                    cur.copy(
+                        drawStrokes = cur.drawStrokes +
+                            DrawStroke(listOf(x to y), drawColor, drawWidth, drawOpacity)
+                    )
+                )
+            }
+            EditorTool.InsertObjects -> {
+                if (insertMode == InsertMode.BRUSH) {
+                    val sel = cur.insertedImages.firstOrNull { it.id == selInsertedId }
+                    if (sel != null) {
+                        draftTo(
+                            cur.copy(
+                                insertedImages = cur.insertedImages.map {
+                                    if (it.id == sel.id) {
+                                        it.copy(maskStrokes = it.maskStrokes + MaskPoint(x, y, insertBrush))
+                                    } else {
+                                        it
+                                    }
+                                }
+                            )
+                        )
+                    } else {
+                        pendingMask = pendingMask + MaskPoint(x, y, insertBrush)
+                    }
+                } else {
+                    val hit = hitTest(x, y)
+                    if (hit != null && hit.first == "inserted") selInsertedId = hit.second
+                }
+            }
+            EditorTool.Text -> {
+                val hit = hitTest(x, y)
+                if (hit != null && hit.first == "text") selTextId = hit.second
+            }
+            EditorTool.Stickers -> {
+                val hit = hitTest(x, y)
+                if (hit != null && hit.first == "sticker") selStickerId = hit.second
+            }
+            else -> Unit
+        }
+    }
+
+    fun onCanvasDrag(x: Float, y: Float) {
+        val base = dragBase ?: return
+        when (tool) {
+            EditorTool.Draw -> {
+                val strokes = cur.drawStrokes
+                if (strokes.isEmpty()) return
+                val last = strokes.last()
+                draftTo(
+                    cur.copy(
+                        drawStrokes = strokes.dropLast(1) +
+                            last.copy(points = last.points + (x to y))
+                    )
+                )
+            }
+            EditorTool.Reshape -> {
+                val (lx, ly) = dragLast
+                val op = WarpMath.BrushOp(
+                    mode = reshapeMode,
+                    cx = x, cy = y,
+                    radius = reshapeBrush,
+                    strength = 0.9f,
+                    dx = if (reshapeMode == WarpMath.BrushMode.PUSH) x - lx else 0f,
+                    dy = if (reshapeMode == WarpMath.BrushMode.PUSH) y - ly else 0f
+                )
+                dragOps = dragOps + op
+                draftTo(base.copy(warpOps = base.warpOps + dragOps))
+                dragLast = x to y
+            }
+            EditorTool.InsertObjects -> {
+                if (insertMode == InsertMode.BRUSH) {
+                    val sel = cur.insertedImages.firstOrNull { it.id == selInsertedId }
+                    if (sel != null) {
+                        draftTo(
+                            cur.copy(
+                                insertedImages = cur.insertedImages.map {
+                                    if (it.id == sel.id) {
+                                        it.copy(maskStrokes = it.maskStrokes + MaskPoint(x, y, insertBrush))
+                                    } else {
+                                        it
+                                    }
+                                }
+                            )
+                        )
+                    } else {
+                        pendingMask = pendingMask + MaskPoint(x, y, insertBrush)
+                    }
+                } else {
+                    val sel = cur.insertedImages.firstOrNull { it.id == selInsertedId }
+                    if (sel != null) {
+                        draftTo(
+                            cur.copy(
+                                insertedImages = cur.insertedImages.map {
+                                    if (it.id == sel.id) it.copy(x = x, y = y) else it
+                                }
+                            )
+                        )
+                    }
+                }
+            }
+            EditorTool.Text -> {
+                val id = selTextId ?: return
+                draftTo(
+                    cur.copy(
+                        textItems = cur.textItems.map {
+                            if (it.id == id) it.copy(x = x, y = y) else it
+                        }
+                    )
+                )
+            }
+            EditorTool.Stickers -> {
+                val id = selStickerId ?: return
+                draftTo(
+                    cur.copy(
+                        stickerItems = cur.stickerItems.map {
+                            if (it.id == id) it.copy(x = x, y = y) else it
+                        }
+                    )
+                )
+            }
+            EditorTool.Adjustments -> {
+                if (adjustTab == AdjustTab.BLUR && cur.blur.mode == com.shawnrodis.photocraftexpress.engine.BlurMode.RADIAL) {
+                    draftTo(cur.copy(blur = cur.blur.copy(cx = x, cy = y)))
+                }
+            }
+            else -> Unit
+        }
+    }
+
+    fun onCanvasDragEnd() {
+        dragBase = null
+        dragOps = emptyList()
+        commitDraft()
+    }
+
+    val gestureModifier = canvasGestureModifier(
+        active = tool != EditorTool.Crop && !splitCompare,
+        onTap = { x, y -> onCanvasTap(x, y) },
+        onDragStart = { x, y -> onCanvasDragStart(x, y) },
+        onDrag = { x, y -> onCanvasDrag(x, y) },
+        onDragEnd = { onCanvasDragEnd() }
+    )
+
+    // --- Crop handlers ---------------------------------------------------
+    fun onAspectSelected(sel: AspectSel) {
+        aspectSel = sel
+        val rotated = cur.rotation == 90 || cur.rotation == 270
+        val frameW = if (rotated) sourceBitmap.height.toFloat() else sourceBitmap.width.toFloat()
+        val frameH = if (rotated) sourceBitmap.width.toFloat() else sourceBitmap.height.toFloat()
+        val newCrop = when (sel) {
+            AspectSel.Original -> CropRect.FULL
+            AspectSel.Free -> cur.crop
+            is AspectSel.Fixed -> CropGeometry.rectWithAspect(
+                cur.crop, sel.ratio, frameW / frameH
+            )
+        }
+        commitDirect(cur.copy(crop = CropGeometry.clampRect(newCrop)))
+    }
+
+    // --- Layout ------------------------------------------------------------
+    // The top bar lives inside MainActivity's safeDrawing inset gate, so
+    // nothing here can render under the status bar or camera cutout.
+    Column(modifier = Modifier.fillMaxSize().background(AppBg)) {
+        // Top bar, Express order: back · help · auto-enhance · compare ·
+        // download · share · menu. Undo/redo live on the canvas now.
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 6.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
             }
-            Spacer(Modifier.weight(1f))
-            IconButton(
-                onClick = {
-                    history.undo()?.let { state = it }
-                    historyTick++
-                },
-                enabled = history.canUndo
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo")
+            IconButton(onClick = { showAbout = true }) {
+                Icon(Icons.Filled.HelpOutline, contentDescription = "Help", tint = Color.White)
             }
-            IconButton(
-                onClick = {
-                    history.redo()?.let { state = it }
-                    historyTick++
-                },
-                enabled = history.canRedo
-            ) {
-                Icon(Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo")
+            IconButton(onClick = { autoEnhance() }) {
+                Icon(Icons.Filled.AutoFixHigh, contentDescription = "Auto-enhance", tint = Color.White)
             }
-            // Hold-to-compare: press and hold to see the untouched original.
-            Box(
-                modifier = Modifier.pointerInput(Unit) {
-                    detectTapGestures(onPress = {
-                        showOriginal = true
-                        tryAwaitRelease()
-                        showOriginal = false
-                    })
-                }
-            ) {
-                IconButton(onClick = { /* hold gesture does the work */ }) {
-                    Icon(Icons.Filled.Visibility, contentDescription = "Hold to view original")
-                }
-            }
-            Spacer(Modifier.width(4.dp))
-            Button(
-                onClick = { showExportSheet = true },
-                colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                shape = RoundedCornerShape(20.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("Export", fontWeight = FontWeight.SemiBold)
-            }
-        }
-
-        // ---- Canvas ----
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .background(CanvasBg),
-            contentAlignment = Alignment.Center
-        ) {
-            var boxSize by remember { mutableStateOf(IntSize.Zero) }
+            // Compare: tap toggles the split before/after view; holding
+            // the button shows the untouched original until release (the
+            // v0.1.x hold-to-compare, kept alongside the split view).
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .onSizeChanged { boxSize = it },
-                contentAlignment = Alignment.Center
-            ) {
-                val shown = if (showOriginal) originalBitmap else rendered
-                if (shown != null) {
-                    Image(
-                        bitmap = shown.asImageBitmap(),
-                        contentDescription = "Photo being edited",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    CircularProgressIndicator(color = Accent)
-                }
-                if (cropMode && !showOriginal) {
-                    rendered?.let { bmp ->
-                        CropOverlay(
-                            containerSize = boxSize,
-                            imageWidth = bmp.width,
-                            imageHeight = bmp.height,
-                            crop = state.crop,
-                            aspectNorm = aspectNorm,
-                            onCommit = { commit(state.copy(crop = it)) }
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onPress = {
+                                val released = withTimeoutOrNull(300) { tryAwaitRelease() }
+                                if (released == true) {
+                                    splitCompare = !splitCompareRef.value
+                                } else {
+                                    showOriginal = true
+                                    tryAwaitRelease()
+                                    showOriginal = false
+                                }
+                            }
                         )
                     }
+                    .padding(10.dp)
+            ) {
+                Icon(
+                    SplitCompareIcon, contentDescription = "Compare before and after",
+                    tint = if (splitCompare || showOriginal) Accent else Color.White
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { quickSave() }) {
+                Icon(Icons.Filled.Download, contentDescription = "Save to gallery", tint = Color.White)
+            }
+            IconButton(onClick = { showExport = true }) {
+                Icon(Icons.Filled.Share, contentDescription = "Share", tint = Color.White)
+            }
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Menu", tint = Color.White)
                 }
-                if (showOriginal) {
-                    Text(
-                        "Original",
-                        color = Color.White,
-                        fontSize = 12.sp,
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 10.dp)
-                            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("About") },
+                        onClick = { menuOpen = false; showAbout = true }
                     )
-                }
-                if (exporting) {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.45f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = Accent)
-                            Spacer(Modifier.height(10.dp))
-                            Text("Exporting at full resolution…", color = Color.White, fontSize = 13.sp)
-                        }
-                    }
+                    DropdownMenuItem(
+                        text = { Text("Check for updates") },
+                        onClick = { menuOpen = false; onCheckForUpdates() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Reset edits") },
+                        onClick = { menuOpen = false; resetEdits() }
+                    )
                 }
             }
         }
 
-        // ---- Tool panel ----
-        when (activeTool) {
-            EditorTool.Looks -> LooksPanel(
-                thumbnails = lookThumbs,
-                selectedLookId = state.lookId,
-                intensity = state.lookIntensity,
-                onSelectLook = { id ->
-                    commit(
-                        state.copy(
-                            lookId = id,
-                            lookIntensity = if (id == state.lookId) state.lookIntensity else 100f
-                        )
-                    )
-                },
-                onIntensityDraft = { state = state.copy(lookIntensity = it) },
-                onIntensityCommit = { commitCurrent() }
-            )
-
-            EditorTool.Adjust -> AdjustPanel(
-                adj = state.adj,
-                onDraft = { state = state.copy(adj = it) },
-                onCommit = { commitCurrent() }
-            )
-
-            EditorTool.Crop -> CropPanel(
-                aspectSel = aspectSel,
-                onAspectSelected = { sel ->
-                    aspectSel = sel
-                    when (sel) {
-                        is AspectSel.Fixed -> commit(
-                            state.copy(crop = CropGeometry.rectWithAspect(state.crop, sel.ratio, frameAspect))
-                        )
-                        AspectSel.Original -> commit(state.copy(crop = CropRect.FULL))
-                        AspectSel.Free -> Unit
-                    }
-                },
-                onRotate = {
-                    commit(
-                        state.copy(
-                            rotation = (state.rotation + 90) % 360,
-                            crop = CropGeometry.rotateRectCw(state.crop)
-                        )
-                    )
-                },
-                onFlipH = {
-                    commit(state.copy(flipH = !state.flipH, crop = CropGeometry.flipHRect(state.crop)))
-                },
-                onFlipV = {
-                    commit(state.copy(flipV = !state.flipV, crop = CropGeometry.flipVRect(state.crop)))
-                },
-                onResetCrop = {
-                    aspectSel = AspectSel.Original
-                    commit(state.copy(crop = CropRect.FULL))
-                }
-            )
-
-            else -> StubPanel(activeTool)
-        }
-
-        // ---- Tool carousel ----
-        LazyRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(ChromeBar),
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+        // Canvas: fitted to the available area, aspect = displayed image.
+        val shownBitmap = if (showOriginal) sourceBitmap else preview
+        val imgW = shownBitmap?.width ?: sourceBitmap.width
+        val imgH = shownBitmap?.height ?: sourceBitmap.height
+        BoxWithConstraints(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentAlignment = Alignment.Center
         ) {
-            items(EditorTool.entries, key = { it.name }) { tool ->
-                val selected = tool == activeTool
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .width(68.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (selected) Color(0xFF2C2C2C) else Color.Transparent)
-                        .clickable { activeTool = tool }
-                        .padding(vertical = 7.dp)
+            val density = LocalDensity.current
+            val maxWpx = constraints.maxWidth
+            val maxHpx = constraints.maxHeight
+            val dispWpx = minOf(maxWpx, (maxHpx.toFloat() * imgW / imgH).toInt())
+            val dispHpx = (dispWpx.toFloat() * imgH / imgW).toInt()
+            val dispWdp = with(density) { dispWpx.toDp() }
+            val dispHdp = with(density) { dispHpx.toDp() }
+            Box(
+                modifier = Modifier
+                    .size(dispWdp, dispHdp)
+                    .onSizeChanged { canvasSize = it }
+                    .then(gestureModifier)
+            ) {
+                if (showOriginal) {
+                    Image(
+                        bitmap = sourceBitmap.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else if (splitCompare && tool != EditorTool.Crop &&
+                    beforeBitmap != null && preview != null
                 ) {
-                    Box {
-                        Icon(
-                            tool.icon,
-                            contentDescription = tool.label,
-                            tint = when {
-                                selected -> Color.White
-                                tool.implemented -> Color(0xFFC9C9C9)
-                                else -> Color(0xFF6E6E6E)
-                            },
-                            modifier = Modifier.size(25.dp)
+                    SplitCompareView(
+                        before = beforeBitmap!!,
+                        after = preview!!,
+                        divider = divider,
+                        onDivider = { divider = it }
+                    )
+                } else {
+                    preview?.let {
+                        Image(
+                            bitmap = it.asImageBitmap(),
+                            contentDescription = null,
+                            contentScale = ContentScale.FillBounds,
+                            modifier = Modifier.fillMaxSize()
                         )
-                        if (!tool.implemented) {
-                            Text(
-                                "SOON",
-                                fontSize = 6.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .offset(x = 9.dp, y = (-3).dp)
-                                    .background(Accent, RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 3.dp, vertical = 1.dp)
+                    }
+                }
+                // Radial blur ellipse outline.
+                if (!showOriginal && tool == EditorTool.Adjustments &&
+                    adjustTab == AdjustTab.BLUR &&
+                    cur.blur.mode == com.shawnrodis.photocraftexpress.engine.BlurMode.RADIAL
+                ) {
+                    val blur = cur.blur
+                    Canvas(Modifier.fillMaxSize()) {
+                        drawOval(
+                            color = Accent,
+                            topLeft = Offset(
+                                (blur.cx - blur.rx) * size.width,
+                                (blur.cy - blur.ry) * size.height
+                            ),
+                            size = Size(blur.rx * 2f * size.width, blur.ry * 2f * size.height),
+                            style = Stroke(width = 2.dp.toPx())
+                        )
+                    }
+                }
+                // Crop interaction layers.
+                if (!showOriginal && tool == EditorTool.Crop && canvasSize.width > 0) {
+                    if (cropTab == CropTab.TRANSFORM) {
+                        TransformHandles(
+                            quad = cur.transform ?: WarpMath.Quad.IDENTITY,
+                            canvasSize = canvasSize,
+                            onDraft = { q -> draftTo(cur.copy(transform = q)) },
+                            onCommit = { commitDraft() }
+                        )
+                    } else {
+                        preview?.let { pv ->
+                            CropOverlay(
+                                containerSize = canvasSize,
+                                imageWidth = pv.width,
+                                imageHeight = pv.height,
+                                crop = cur.crop,
+                                aspectNorm = (aspectSel as? AspectSel.Fixed)?.ratio,
+                                onCommit = { newCrop -> commitDirect(cur.copy(crop = newCrop)) }
                             )
                         }
                     }
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        tool.label,
-                        fontSize = 11.sp,
-                        color = when {
-                            selected -> Color.White
-                            tool.implemented -> Color(0xFFC9C9C9)
-                            else -> Color(0xFF6E6E6E)
+                }
+            }
+            // Floating undo/redo, Express-style: bottom-left of the canvas,
+            // above the tool strip. Undo is always here; redo appears beside
+            // it only while a redoable state exists.
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.BottomStart
+            ) {
+                Row(
+                    Modifier.padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(Color(0xAA000000), CircleShape)
+                            .clickable(enabled = history.canUndo) { undo() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Undo, contentDescription = "Undo",
+                            tint = if (history.canUndo) Color.White else Color(0xFF888888)
+                        )
+                    }
+                    if (history.canRedo) {
+                        Spacer(Modifier.size(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .background(Color(0xAA000000), CircleShape)
+                                .clickable { redo() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.Redo, contentDescription = "Redo",
+                                tint = Color.White
+                            )
                         }
+                    }
+                }
+            }
+        }
+
+        // Tool panel.
+        Box(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 340.dp)
+        ) {
+            when (tool) {
+                EditorTool.Looks -> LooksPanel(
+                    thumbnails = lookThumbs,
+                    selectedLookId = cur.lookId,
+                    intensity = cur.lookIntensity,
+                    onSelectLook = { commitDirect(cur.copy(lookId = it)) },
+                    onIntensityDraft = { draftTo(cur.copy(lookIntensity = it)) },
+                    onIntensityCommit = { commitDraft() }
+                )
+                EditorTool.Adjustments -> AdjustmentsPanel(
+                    adj = cur.adj,
+                    splitTone = cur.splitTone,
+                    colorMix = cur.colorMix,
+                    blur = cur.blur,
+                    vignette = cur.vignette,
+                    adjustTab = adjustTab,
+                    onAdjustTab = { adjustTab = it },
+                    onDraftAdj = { draftTo(cur.copy(adj = it)) },
+                    onDraftSplitTone = { draftTo(cur.copy(splitTone = it)) },
+                    onDraftColorMix = { draftTo(cur.copy(colorMix = it)) },
+                    onDraftBlur = { draftTo(cur.copy(blur = it)) },
+                    onDraftVignette = { draftTo(cur.copy(vignette = it)) },
+                    onCommit = { commitDraft() }
+                )
+                EditorTool.Heal -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    HealPanel(brushSize = healBrush, onBrushSize = { healBrush = it })
+                }
+                EditorTool.Crop -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    CropPanel(
+                        aspectSel = aspectSel,
+                        cropTab = cropTab,
+                        onCropTab = { cropTab = it },
+                        onAspectSelected = { onAspectSelected(it) },
+                        onRotate = {
+                            val newRot = (cur.rotation + 90) % 360
+                            commitDirect(
+                                cur.copy(
+                                    rotation = newRot,
+                                    crop = CropGeometry.rotateRectCw(cur.crop)
+                                )
+                            )
+                        },
+                        onFlipH = {
+                            commitDirect(
+                                cur.copy(
+                                    flipH = !cur.flipH,
+                                    crop = CropGeometry.flipHRect(cur.crop)
+                                )
+                            )
+                        },
+                        onFlipV = {
+                            commitDirect(
+                                cur.copy(
+                                    flipV = !cur.flipV,
+                                    crop = CropGeometry.flipVRect(cur.crop)
+                                )
+                            )
+                        },
+                        onResetCrop = {
+                            aspectSel = AspectSel.Original
+                            commitDirect(cur.copy(crop = CropRect.FULL))
+                        },
+                        onResetTransform = { commitDirect(cur.copy(transform = null)) }
+                    )
+                }
+                EditorTool.Smooth -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    SmoothPanel(
+                        strength = cur.smooth,
+                        onDraft = { draftTo(cur.copy(smooth = it)) },
+                        onCommit = { commitDraft() }
+                    )
+                }
+                EditorTool.Face -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    FacePanel(
+                        hasFace = hasFace,
+                        face = cur.face,
+                        onDraft = { draftTo(cur.copy(face = it)) },
+                        onCommit = { commitDraft() }
+                    )
+                }
+                EditorTool.Reshape -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    ReshapePanel(
+                        mode = reshapeMode,
+                        brushSize = reshapeBrush,
+                        onMode = { reshapeMode = it },
+                        onBrushSize = { reshapeBrush = it }
+                    )
+                }
+                EditorTool.Makeup -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    MakeupPanel(
+                        hasFace = hasFace,
+                        lipColor = cur.makeupLipColor,
+                        lip = cur.makeupLip,
+                        blush = cur.makeupBlush,
+                        shadow = cur.makeupShadow,
+                        liner = cur.makeupLiner,
+                        onLipColor = { commitDirect(cur.copy(makeupLipColor = it)) },
+                        onDraft = { l, b, s, ln ->
+                            draftTo(
+                                cur.copy(
+                                    makeupLip = l, makeupBlush = b,
+                                    makeupShadow = s, makeupLiner = ln
+                                )
+                            )
+                        },
+                        onCommit = { commitDraft() }
+                    )
+                }
+                EditorTool.Draw -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    DrawPanel(
+                        color = drawColor,
+                        width = drawWidth,
+                        opacity = drawOpacity,
+                        onColor = { drawColor = it },
+                        onWidth = { drawWidth = it },
+                        onOpacity = { drawOpacity = it }
+                    )
+                }
+                EditorTool.Background -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    BackgroundPanel(
+                        personFound = personFound,
+                        fx = cur.background,
+                        onDraft = { draftTo(cur.copy(background = it)) },
+                        onCommit = { commitDraft() }
+                    )
+                }
+                EditorTool.InsertObjects -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    val sel = cur.insertedImages.firstOrNull { it.id == selInsertedId }
+                    InsertPanel(
+                        mode = insertMode,
+                        brushSize = insertBrush,
+                        hasLayer = sel != null,
+                        useMask = sel?.useMask == true,
+                        layerScale = sel?.scale ?: 0.5f,
+                        layerRotation = sel?.rotation ?: 0f,
+                        onMode = { insertMode = it },
+                        onBrushSize = { insertBrush = it },
+                        onAddPhoto = {
+                            insertPicker.launch(
+                                PickVisualMediaRequest(
+                                    ActivityResultContracts.PickVisualMedia.ImageOnly
+                                )
+                            )
+                        },
+                        onClearMask = {
+                            pendingMask = emptyList()
+                            val s = sel
+                            if (s != null) {
+                                commitDirect(
+                                    cur.copy(
+                                        insertedImages = cur.insertedImages.map {
+                                            if (it.id == s.id) it.copy(maskStrokes = emptyList()) else it
+                                        }
+                                    )
+                                )
+                            }
+                        },
+                        onUseMask = { use ->
+                            val s = sel ?: return@InsertPanel
+                            commitDirect(
+                                cur.copy(
+                                    insertedImages = cur.insertedImages.map {
+                                        if (it.id == s.id) it.copy(useMask = use) else it
+                                    }
+                                )
+                            )
+                        },
+                        onLayerScale = { v ->
+                            val s = sel ?: return@InsertPanel
+                            draftTo(
+                                cur.copy(
+                                    insertedImages = cur.insertedImages.map {
+                                        if (it.id == s.id) it.copy(scale = v) else it
+                                    }
+                                )
+                            )
+                        },
+                        onLayerScaleCommit = { commitDraft() },
+                        onLayerRotation = { v ->
+                            val s = sel ?: return@InsertPanel
+                            draftTo(
+                                cur.copy(
+                                    insertedImages = cur.insertedImages.map {
+                                        if (it.id == s.id) it.copy(rotation = v) else it
+                                    }
+                                )
+                            )
+                        },
+                        onLayerRotationCommit = { commitDraft() },
+                        onDeleteLayer = {
+                            val s = sel ?: return@InsertPanel
+                            commitDirect(
+                                cur.copy(
+                                    insertedImages = cur.insertedImages.filter { it.id != s.id }
+                                )
+                            )
+                            selInsertedId = null
+                            insertedBitmaps = insertedBitmaps - s.id.toString()
+                        }
+                    )
+                }
+                EditorTool.Overlays -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    OverlaysPanel(
+                        overlay = cur.overlay,
+                        onDraft = { draftTo(cur.copy(overlay = it)) },
+                        onCommit = { commitDraft() }
+                    )
+                }
+                EditorTool.Text -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    val sel = cur.textItems.firstOrNull { it.id == selTextId }
+                    TextPanel(
+                        tab = textTab,
+                        onTab = { textTab = it },
+                        selectedText = sel,
+                        onAddText = { text, preset ->
+                            val base = TextItem(
+                                id = nextLayerId++, text = text, x = 0.5f, y = 0.5f
+                            )
+                            val styled = when (preset) {
+                                TextStylePreset.BASIC -> base
+                                TextStylePreset.QUOTE -> base.copy(
+                                    font = TextFont.SERIF, italic = true, size = 0.10f
+                                )
+                                TextStylePreset.MEME -> base.copy(
+                                    bold = true, strokeWidth = 0.08f
+                                )
+                            }
+                            commitDirect(cur.copy(textItems = cur.textItems + styled))
+                            selTextId = styled.id
+                        },
+                        onApplyStyle = { preset ->
+                            val item = sel ?: return@TextPanel
+                            val updated = when (preset) {
+                                TextStylePreset.BASIC -> item.copy(
+                                    font = TextFont.SANS, bold = false,
+                                    italic = false, strokeWidth = 0f
+                                )
+                                TextStylePreset.QUOTE -> item.copy(
+                                    font = TextFont.SERIF, italic = true,
+                                    strokeWidth = 0f,
+                                    size = maxOf(item.size, 0.10f)
+                                )
+                                TextStylePreset.MEME -> item.copy(
+                                    font = TextFont.SANS, bold = true,
+                                    italic = false, strokeWidth = 0.08f,
+                                    strokeColor = -0x1000000
+                                )
+                            }
+                            commitDirect(
+                                cur.copy(
+                                    textItems = cur.textItems.map {
+                                        if (it.id == item.id) updated else it
+                                    }
+                                )
+                            )
+                        },
+                        onDraftSelected = { updated ->
+                            draftTo(
+                                cur.copy(
+                                    textItems = cur.textItems.map {
+                                        if (it.id == updated.id) updated else it
+                                    }
+                                )
+                            )
+                        },
+                        onCommit = { commitDraft() },
+                        onDeleteSelected = {
+                            val item = sel ?: return@TextPanel
+                            commitDirect(
+                                cur.copy(textItems = cur.textItems.filter { it.id != item.id })
+                            )
+                            selTextId = null
+                        }
+                    )
+                }
+                EditorTool.Stickers -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    val sel = cur.stickerItems.firstOrNull { it.id == selStickerId }
+                    StickersPanel(
+                        selectedKind = stickerKind,
+                        onKind = { stickerKind = it },
+                        hasSelection = sel != null,
+                        selScale = sel?.scale ?: 0.15f,
+                        selRotation = sel?.rotation ?: 0f,
+                        onSelScale = { v ->
+                            val s = sel ?: return@StickersPanel
+                            draftTo(
+                                cur.copy(
+                                    stickerItems = cur.stickerItems.map {
+                                        if (it.id == s.id) it.copy(scale = v) else it
+                                    }
+                                )
+                            )
+                        },
+                        onSelScaleCommit = { commitDraft() },
+                        onSelRotation = { v ->
+                            val s = sel ?: return@StickersPanel
+                            draftTo(
+                                cur.copy(
+                                    stickerItems = cur.stickerItems.map {
+                                        if (it.id == s.id) it.copy(rotation = v) else it
+                                    }
+                                )
+                            )
+                        },
+                        onSelRotationCommit = { commitDraft() },
+                        onDeleteSelected = {
+                            val s = sel ?: return@StickersPanel
+                            commitDirect(
+                                cur.copy(stickerItems = cur.stickerItems.filter { it.id != s.id })
+                            )
+                            selStickerId = null
+                        }
+                    )
+                }
+                EditorTool.Borders -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    BordersPanel(
+                        border = cur.border,
+                        tab = borderTab,
+                        onTab = { borderTab = it },
+                        onDraft = { draftTo(cur.copy(border = it)) },
+                        onCommit = { commitDraft() }
+                    )
+                }
+                EditorTool.Eyes -> Box(Modifier.verticalScroll(rememberScrollState())) {
+                    EyesPanel(
+                        mode = eyesMode,
+                        hasFace = hasFace,
+                        enhance = cur.eyesEnhance,
+                        brushSize = eyeBrush,
+                        onMode = { eyesMode = it },
+                        onEnhance = { draftTo(cur.copy(eyesEnhance = it)) },
+                        onBrushSize = { eyeBrush = it },
+                        onCommit = { commitDraft() }
                     )
                 }
             }
         }
 
-        SnackbarHost(snackbar)
+        // Tool carousel, Express order.
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().background(PanelBg),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(4.dp)
+        ) {
+            items(EditorTool.values(), key = { it.name }) { t ->
+                val selected = tool == t
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (selected) Color(0xFF2E4A66) else Color.Transparent)
+                        .clickable { tool = t }
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        t.icon, contentDescription = null,
+                        tint = if (selected) Accent else Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        t.label, fontSize = 11.sp,
+                        color = if (selected) Accent else Color.White
+                    )
+                }
+            }
+        }
     }
 
-    if (showExportSheet) {
-        ModalBottomSheet(onDismissRequest = { showExportSheet = false }) {
-            // The sheet is its own window, outside the root inset gate in
-            // MainActivity: keep its actions clear of the navigation bar.
-            Column(Modifier.navigationBarsPadding().padding(bottom = 12.dp)) {
-                ListItem(
-                    headlineContent = { Text("Save a copy") },
-                    supportingContent = { Text("Full-resolution JPEG in Pictures/PhotoCraftExpress") },
-                    leadingContent = { Icon(Icons.Filled.Save, contentDescription = null) },
-                    modifier = Modifier.clickable {
-                        showExportSheet = false
-                        exporting = true
-                        scope.launch {
-                            val msg = onExport(state, false)
-                            exporting = false
-                            snackbar.showSnackbar(msg)
+    // Express-style export/share sheet.
+    if (showExport) {
+        ExportSheet(
+            preview = preview,
+            exportSize = exportSize,
+            exportFormat = exportFormat,
+            exportQuality = exportQuality,
+            exportWatermark = exportWatermark,
+            customW = customW,
+            customH = customH,
+            exporting = exporting,
+            onSizeMode = { mode ->
+                exportSize = exportSize.copy(mode = mode)
+            },
+            onFormat = { exportFormat = it },
+            onQuality = { exportQuality = it },
+            onWatermark = { exportWatermark = it },
+            onCustomW = { customW = it },
+            onCustomH = { customH = it },
+            onLockAspect = { exportSize = exportSize.copy(lockAspect = it) },
+            onDismiss = { if (!exporting) showExport = false },
+            onExport = { action ->
+                val w = customW.toIntOrNull() ?: 0
+                val h = customH.toIntOrNull() ?: 0
+                val size = exportSize.copy(customW = w, customH = h)
+                exportSize = size
+                exporting = true
+                scope.launch {
+                    if (action == ExportAction.PRINT) {
+                        // Print shows system UI: render off-main, print on-main.
+                        val (bmp, error) = Exporter.renderExport(
+                            context, sourceUri, curRef.value, size,
+                            exportFormat, exportQuality, exportWatermark
+                        )
+                        exporting = false
+                        showExport = false
+                        if (bmp != null) {
+                            val msg = Exporter.printImage(
+                                context, bmp, Exporter.exportFileName(exportFormat)
+                            )
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(
+                                context, error ?: "Export failed.", Toast.LENGTH_LONG
+                            ).show()
                         }
-                    }
-                )
-                ListItem(
-                    headlineContent = { Text("Share") },
-                    supportingContent = { Text("Send the edited photo to another app") },
-                    leadingContent = { Icon(Icons.Filled.Share, contentDescription = null) },
-                    modifier = Modifier.clickable {
-                        showExportSheet = false
-                        exporting = true
-                        scope.launch {
-                            val msg = onExport(state, true)
-                            exporting = false
-                            snackbar.showSnackbar(msg)
+                    } else {
+                        val msg = withContext(Dispatchers.Default) {
+                            Exporter.export(
+                                context, sourceUri, curRef.value, size,
+                                exportFormat, exportQuality, exportWatermark, action
+                            )
                         }
+                        exporting = false
+                        showExport = false
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                     }
+                }
+            }
+        )
+    }
+
+    // About/credits dialog (help button and ⋮ menu).
+    if (showAbout) {
+        AboutDialog(
+            onDismiss = { showAbout = false },
+            onCheckForUpdates = { showAbout = false; onCheckForUpdates() }
+        )
+    }
+}
+
+/**
+ * One pointer-input gate for the canvas: taps for Heal / Eyes / Stickers /
+ * Text / Insert selection, drags for Draw / Reshape / Insert brush /
+ * layer moves / radial-blur ellipse. A drag only starts after the touch
+ * slop, so taps and drags never double-fire.
+ */
+@Composable
+private fun canvasGestureModifier(
+    active: Boolean,
+    onTap: (Float, Float) -> Unit,
+    onDragStart: (Float, Float) -> Unit,
+    onDrag: (Float, Float) -> Unit,
+    onDragEnd: () -> Unit
+): Modifier {
+    if (!active) return Modifier
+    val tapRef = rememberUpdatedState(onTap)
+    val dragStartRef = rememberUpdatedState(onDragStart)
+    val dragRef = rememberUpdatedState(onDrag)
+    val dragEndRef = rememberUpdatedState(onDragEnd)
+    return Modifier.pointerInput(Unit) {
+        awaitEachGesture {
+            val down = awaitFirstDown()
+            var last = down.position
+            var dragging = false
+            var done = false
+            while (!done) {
+                val ev = awaitPointerEvent()
+                val ch = ev.changes.firstOrNull { it.id == down.id }
+                if (ch == null) {
+                    done = true
+                    continue
+                }
+                // (Compose UI 1.7 dropped changedToUpOrCancelled(); a
+                // released-or-cancelled pointer simply reads !pressed.)
+                if (!ch.pressed) {
+                    if (dragging) {
+                        dragEndRef.value()
+                    } else {
+                        tapRef.value(
+                            last.x / size.width, last.y / size.height
+                        )
+                    }
+                    ch.consume()
+                    done = true
+                } else if (ch.pressed) {
+                    val dist = (ch.position - down.position).getDistance()
+                    if (!dragging && dist > 8f) {
+                        dragging = true
+                        dragStartRef.value(
+                            down.position.x / size.width,
+                            down.position.y / size.height
+                        )
+                    }
+                    if (dragging) {
+                        dragRef.value(
+                            ch.position.x / size.width,
+                            ch.position.y / size.height
+                        )
+                        last = ch.position
+                    }
+                    ch.consume()
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The four corner handles for Crop TRANSFORM (perspective/keystone).
+ * Corners live in the cropped frame, which is exactly the canvas frame
+ * while the Transform tab is active (the preview is cropped then).
+ */
+@Composable
+private fun TransformHandles(
+    quad: WarpMath.Quad,
+    canvasSize: IntSize,
+    onDraft: (WarpMath.Quad) -> Unit,
+    onCommit: () -> Unit
+) {
+    var corners by remember(quad, canvasSize) {
+        mutableStateOf(
+            List(4) { i ->
+                val c = quad.corner(i)
+                Offset(c.first * canvasSize.width, c.second * canvasSize.height)
+            }
+        )
+    }
+    Canvas(Modifier.fillMaxSize()) {
+        val pts = corners
+        for (i in 0 until 4) {
+            drawLine(
+                color = Accent,
+                start = pts[i],
+                end = pts[(i + 1) % 4],
+                strokeWidth = 2.dp.toPx()
+            )
+        }
+    }
+    for (i in 0 until 4) {
+        val pos = corners[i]
+        Box(
+            modifier = Modifier
+                .offset {
+                    IntOffset(
+                        (pos.x - 16.dp.toPx()).roundToInt(),
+                        (pos.y - 16.dp.toPx()).roundToInt()
+                    )
+                }
+                .size(32.dp)
+                .background(Accent, CircleShape)
+                .border(2.dp, Color.White, CircleShape)
+                .pointerInput(i, canvasSize) {
+                    detectDragGestures(
+                        onDragEnd = { onCommit() }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        val updated = corners.toMutableList()
+                        val cur = updated[i]
+                        updated[i] = Offset(
+                            (cur.x + dragAmount.x).coerceIn(0f, canvasSize.width.toFloat()),
+                            (cur.y + dragAmount.y).coerceIn(0f, canvasSize.height.toFloat())
+                        )
+                        corners = updated
+                        onDraft(
+                            WarpMath.Quad(
+                                updated[0].x / canvasSize.width,
+                                updated[0].y / canvasSize.height,
+                                updated[1].x / canvasSize.width,
+                                updated[1].y / canvasSize.height,
+                                updated[2].x / canvasSize.width,
+                                updated[2].y / canvasSize.height,
+                                updated[3].x / canvasSize.width,
+                                updated[3].y / canvasSize.height
+                            )
+                        )
+                    }
+                }
+        )
+    }
+}
+
+/**
+ * Split-rectangle compare icon for the top bar: left half an outline
+ * (before), right half filled (after). Drawn fresh — not Adobe's icon.
+ */
+private val SplitCompareIcon: ImageVector by lazy {
+    ImageVector.Builder("SplitCompare", 24.dp, 24.dp, 24f, 24f)
+        .addPath(
+            pathData = listOf(
+                PathNode.MoveTo(4f, 5f),
+                PathNode.LineTo(11f, 5f),
+                PathNode.LineTo(11f, 19f),
+                PathNode.LineTo(4f, 19f),
+                PathNode.Close
+            ),
+            pathFillType = PathFillType.NonZero,
+            fill = SolidColor(Color.Transparent),
+            stroke = SolidColor(Color.Black),
+            strokeLineWidth = 1.5f
+        )
+        .addPath(
+            pathData = listOf(
+                PathNode.MoveTo(13f, 5f),
+                PathNode.LineTo(20f, 5f),
+                PathNode.LineTo(20f, 19f),
+                PathNode.LineTo(13f, 19f),
+                PathNode.Close
+            ),
+            pathFillType = PathFillType.NonZero,
+            fill = SolidColor(Color.Black)
+        )
+        .build()
+}
+
+/**
+ * Split before/after view: the untouched-geometry "before" on the left,
+ * the edited photo on the right, divided by a draggable divider line.
+ * Dragging anywhere on the view moves the divider.
+ */
+@Composable
+private fun SplitCompareView(
+    before: Bitmap,
+    after: Bitmap,
+    divider: Float,
+    onDivider: (Float) -> Unit
+) {
+    val beforeImg = remember(before) { before.asImageBitmap() }
+    val afterImg = remember(after) { after.asImageBitmap() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectDragGestures { change, _ ->
+                    change.consume()
+                    onDivider((change.position.x / size.width).coerceIn(0.05f, 0.95f))
+                }
+            }
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            val dx = divider * w
+            val splitPx = (divider * beforeImg.width).toInt().coerceIn(0, beforeImg.width)
+            drawImage(
+                image = beforeImg,
+                srcOffset = androidx.compose.ui.unit.IntOffset(0, 0),
+                srcSize = androidx.compose.ui.unit.IntSize(splitPx, beforeImg.height),
+                dstOffset = androidx.compose.ui.unit.IntOffset(0, 0),
+                dstSize = androidx.compose.ui.unit.IntSize(dx.toInt(), h.toInt())
+            )
+            val afterX = (divider * afterImg.width).toInt().coerceIn(0, afterImg.width)
+            drawImage(
+                image = afterImg,
+                srcOffset = androidx.compose.ui.unit.IntOffset(afterX, 0),
+                srcSize = androidx.compose.ui.unit.IntSize(afterImg.width - afterX, afterImg.height),
+                dstOffset = androidx.compose.ui.unit.IntOffset(dx.toInt(), 0),
+                dstSize = androidx.compose.ui.unit.IntSize((w - dx).toInt(), h.toInt())
+            )
+            drawLine(
+                color = Accent,
+                start = Offset(dx, 0f),
+                end = Offset(dx, h),
+                strokeWidth = 2.dp.toPx()
+            )
+            // Divider handle dot, centred vertically.
+            drawCircle(
+                color = Accent,
+                radius = 14.dp.toPx(),
+                center = Offset(dx, h / 2f)
+            )
+            drawCircle(
+                color = Color.White,
+                radius = 5.dp.toPx(),
+                center = Offset(dx, h / 2f)
+            )
+        }
+    }
+}
+
+/** About/credits dialog, shared by the help button and the ⋮ menu. */
+@Composable
+private fun AboutDialog(
+    onDismiss: () -> Unit,
+    onCheckForUpdates: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("PhotoCraft Express 0.2.0") },
+        text = {
+            Text(
+                "A photo editor with an original codebase and hand-drawn icons. " +
+                    "Its adjustment engine's mathematics follows PhotoCraft " +
+                    "(github.com/storytold/photocraft), the open-source clean-room " +
+                    "photo editor by storytold / ArtCraft, used under the MIT OR " +
+                    "Apache-2.0 licenses — see the NOTICE file in the source repo.\n\n" +
+                    "The interface recreates Photoshop Express's layout and flow " +
+                    "with original artwork. PhotoCraft Express is not affiliated " +
+                    "with or endorsed by storytold/ArtCraft or Adobe.\n\n" +
+                    "How to use: pick a tool along the bottom — Looks, Adjustments, " +
+                    "Heal, Crop, Smooth, Face, Reshape, Makeup, Draw, Background, " +
+                    "Insert Objects, Overlays, Text, Stickers, Borders, Eyes — then " +
+                    "use its panel. Brush tools (Heal, Draw, Reshape, the Insert " +
+                    "brush, Eyes) work by tapping or dragging on the photo. Undo " +
+                    "lives at the canvas's bottom-left; redo appears beside it " +
+                    "when available. The wand auto-enhances in one tap (undoable). " +
+                    "The download button saves straight to your gallery; the share " +
+                    "button opens the full export screen with format, size, quality " +
+                    "and watermark options."
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+        dismissButton = {
+            TextButton(onClick = onCheckForUpdates) { Text("Check for updates") }
+        }
+    )
+}
+
+/**
+ * Express-style export/share screen: rendered preview on top, format /
+ * dimensions / quality chips, our own text watermark options, and the
+ * share actions — Save to Gallery, system Share sheet, Set as Wallpaper,
+ * Print. No Facebook targets, no app-specific targets of any kind.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExportSheet(
+    preview: Bitmap?,
+    exportSize: ExportSize,
+    exportFormat: ExportFormat,
+    exportQuality: Int,
+    exportWatermark: WatermarkStyle,
+    customW: String,
+    customH: String,
+    exporting: Boolean,
+    onSizeMode: (ExportSizeMode) -> Unit,
+    onFormat: (ExportFormat) -> Unit,
+    onQuality: (Int) -> Unit,
+    onWatermark: (WatermarkStyle) -> Unit,
+    onCustomW: (String) -> Unit,
+    onCustomH: (String) -> Unit,
+    onLockAspect: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+    onExport: (ExportAction) -> Unit
+) {
+    // Dimensions label for the chosen size setting. Long-edge and custom
+    // modes depend only on the photo's aspect, so the preview's aspect
+    // gives the exact export dimensions; Original and 50% need the
+    // full-resolution size, so they show the setting instead.
+    val dimsLabel = when (exportSize.mode) {
+        ExportSizeMode.ORIGINAL -> "Original size"
+        ExportSizeMode.LONG_1080, ExportSizeMode.LONG_2048 -> {
+            val pv = preview
+            if (pv == null) {
+                "…"
+            } else {
+                val dims = exportSize.outputSize(pv.width, pv.height)
+                if (dims == null) "Original size" else "${dims.first} × ${dims.second} px"
+            }
+        }
+        ExportSizeMode.PERCENT_50 -> "50% of original"
+        ExportSizeMode.CUSTOM -> {
+            val w = customW.toIntOrNull()
+            val h = customH.toIntOrNull()
+            if (w == null && h == null) "Custom size"
+            else "${w ?: "?"} × ${h ?: "?"} px"
+        }
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            Text("Export", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            Spacer(Modifier.size(10.dp))
+            preview?.let {
+                Image(
+                    bitmap = it.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 220.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF000000))
                 )
+                Spacer(Modifier.size(10.dp))
+            }
+            Text("Format", fontSize = 14.sp, color = Color(0xFFE0E0E0))
+            ModeChips(
+                options = listOf("JPEG", "PNG"),
+                selected = if (exportFormat == ExportFormat.JPEG) "JPEG" else "PNG",
+                onSelect = { onFormat(if (it == "PNG") ExportFormat.PNG else ExportFormat.JPEG) }
+            )
+            Text("Size", fontSize = 14.sp, color = Color(0xFFE0E0E0))
+            ModeChips(
+                options = listOf("Original", "1080", "2048", "50%", "Custom"),
+                selected = when (exportSize.mode) {
+                    ExportSizeMode.ORIGINAL -> "Original"
+                    ExportSizeMode.LONG_1080 -> "1080"
+                    ExportSizeMode.LONG_2048 -> "2048"
+                    ExportSizeMode.PERCENT_50 -> "50%"
+                    ExportSizeMode.CUSTOM -> "Custom"
+                },
+                onSelect = {
+                    onSizeMode(
+                        when (it) {
+                            "1080" -> ExportSizeMode.LONG_1080
+                            "2048" -> ExportSizeMode.LONG_2048
+                            "50%" -> ExportSizeMode.PERCENT_50
+                            "Custom" -> ExportSizeMode.CUSTOM
+                            else -> ExportSizeMode.ORIGINAL
+                        }
+                    )
+                }
+            )
+            Text(
+                dimsLabel, fontSize = 13.sp, color = Accent,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            )
+            if (exportSize.mode == ExportSizeMode.CUSTOM) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = customW,
+                        onValueChange = { onCustomW(it.filter { c -> c.isDigit() }) },
+                        label = { Text("Width px") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(" × ", fontSize = 18.sp, color = Color.White)
+                    OutlinedTextField(
+                        value = customH,
+                        onValueChange = { onCustomH(it.filter { c -> c.isDigit() }) },
+                        label = { Text("Height px") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Lock aspect ratio", fontSize = 14.sp, color = Color.White,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(checked = exportSize.lockAspect, onCheckedChange = onLockAspect)
+                }
+            }
+            Spacer(Modifier.size(6.dp))
+            Text("Quality: $exportQuality%", fontSize = 14.sp, color = Color(0xFFE0E0E0))
+            Slider(
+                value = exportQuality.toFloat(),
+                onValueChange = { onQuality(it.toInt()) },
+                valueRange = 10f..100f,
+                colors = SliderDefaults.colors(
+                    thumbColor = Accent,
+                    activeTrackColor = Accent,
+                    inactiveTrackColor = Color(0xFF4A4A4A)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (exportFormat == ExportFormat.PNG) {
+                Text(
+                    "PNG is lossless — quality doesn't change the file.",
+                    fontSize = 12.sp, color = Color(0xFF9E9E9E),
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+            }
+            Spacer(Modifier.size(6.dp))
+            Text("Watermark", fontSize = 14.sp, color = Color(0xFFE0E0E0))
+            ModeChips(
+                options = listOf("None", "Text", "Text + rules"),
+                selected = when (exportWatermark) {
+                    WatermarkStyle.NONE -> "None"
+                    WatermarkStyle.TEXT -> "Text"
+                    WatermarkStyle.TEXT_RULES -> "Text + rules"
+                },
+                onSelect = {
+                    onWatermark(
+                        when (it) {
+                            "Text" -> WatermarkStyle.TEXT
+                            "Text + rules" -> WatermarkStyle.TEXT_RULES
+                            else -> WatermarkStyle.NONE
+                        }
+                    )
+                }
+            )
+            HintText("Watermark draws our own name, \"PhotoCraft Express\", as plain text.")
+            Spacer(Modifier.size(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = { onExport(ExportAction.SAVE) },
+                    enabled = !exporting,
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Save to Gallery") }
+                Spacer(Modifier.size(12.dp))
+                Button(
+                    onClick = { onExport(ExportAction.SHARE) },
+                    enabled = !exporting,
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Share") }
+            }
+            Spacer(Modifier.size(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = { onExport(ExportAction.WALLPAPER) },
+                    enabled = !exporting,
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Set as Wallpaper") }
+                Spacer(Modifier.size(12.dp))
+                Button(
+                    onClick = { onExport(ExportAction.PRINT) },
+                    enabled = !exporting,
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Print") }
+                if (exporting) {
+                    Spacer(Modifier.size(12.dp))
+                    CircularProgressIndicator(color = Accent, modifier = Modifier.size(24.dp))
+                }
+            }
+            TextButton(onClick = onDismiss, enabled = !exporting) {
+                Text("Cancel", color = Color(0xFFBDBDBD))
             }
         }
     }

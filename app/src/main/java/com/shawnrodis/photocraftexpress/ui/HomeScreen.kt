@@ -73,6 +73,7 @@ fun HomeScreen(
     onRequestPermission: () -> Unit,
     onPickPhoto: () -> Unit,
     onOpenPhoto: (Uri) -> Unit,
+    onCheckForUpdates: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var searchOpen by remember { mutableStateOf(false) }
@@ -232,7 +233,7 @@ fun HomeScreen(
     if (showCredits) {
         AlertDialog(
             onDismissRequest = { showCredits = false },
-            title = { Text("PhotoCraft Express 0.1.0") },
+            title = { Text("PhotoCraft Express 0.2.0") },
             text = {
                 Text(
                     "A photo editor with an original codebase and hand-drawn icons. " +
@@ -247,6 +248,11 @@ fun HomeScreen(
             },
             confirmButton = {
                 TextButton(onClick = { showCredits = false }) { Text("Close") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showCredits = false; onCheckForUpdates() }
+                ) { Text("Check for updates") }
             }
         )
     }

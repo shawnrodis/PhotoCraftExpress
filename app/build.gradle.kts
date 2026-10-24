@@ -12,8 +12,8 @@ android {
         applicationId = "com.shawnrodis.photocraftexpress"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -39,12 +39,29 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/kotlin-project-structure-metadata.json"
+            // Kotlin multiplatform metadata duplicated between lifecycle-common
+            // and annotation jars (both ship the same androidx knm/manifest files).
+            // These are Kotlin/Native compiler metadata, never read at Android
+            // runtime, so dropping the whole trees from the APK is safe.
+            excludes += "nonJvmMain/**"
+            excludes += "commonMain/**"
+            excludes += "**/*.knm"
         }
     }
+}
+
+// androidx.collection:collection-ktx was folded into androidx.collection:collection
+// in 1.4.0, but an older transitive dep still pulls collection-ktx 1.2.0, whose
+// classes duplicate collection 1.4.0's. Excluding the old module is safe:
+// everything it provided now lives in collection itself.
+configurations.all {
+    exclude(group = "androidx.collection", module = "collection-ktx")
 }
 
 dependencies {
@@ -63,6 +80,15 @@ dependencies {
 
     // EXIF orientation for photo loading (same version as the Toolbox app).
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+
+    // System print UI for the export sheet's Print action.
+    implementation("androidx.print:print:1.0.0")
+
+    // On-device ML Kit (bundled models, no Play Services dependency):
+    // face detection for Face / Makeup / Eyes, selfie segmentation for
+    // Background (people-only in v0.2.0).
+    implementation("com.google.mlkit:face-detection:16.1.7")
+    implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

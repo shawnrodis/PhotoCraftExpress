@@ -2,4 +2,6 @@
 <paths>
     <!-- Exported copies are staged here for the share sheet. -->
     <cache-path name="exports" path="exports/" />
+    <!-- Update APKs downloaded by the in-app updater. -->
+    <cache-path name="updates" path="updates/" />
 </paths>
