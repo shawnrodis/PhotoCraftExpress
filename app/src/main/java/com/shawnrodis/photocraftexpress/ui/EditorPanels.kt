@@ -37,6 +37,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.shawnrodis.photocraftexpress.engine.AdjustMask
 import com.shawnrodis.photocraftexpress.engine.Adjustments
 import com.shawnrodis.photocraftexpress.engine.BlurFx
 import com.shawnrodis.photocraftexpress.engine.BlurMode
@@ -222,22 +224,27 @@ fun LooksPanel(
     var category by remember { mutableStateOf(Looks.CATEGORIES.firstOrNull()?.first ?: "Normal") }
     val looksInCategory = Looks.CATEGORIES.firstOrNull { it.first == category }?.second
         ?: Looks.ALL
-    // Keep the selected look's category in view.
-    val selectedCategory = Looks.CATEGORIES.firstOrNull { (_, looks) ->
-        looks.any { it.id == selectedLookId }
-    }?.first
-    if (selectedCategory != null && selectedCategory != category) {
-        category = selectedCategory
+    // Follow the selected look's category ONLY when the look itself
+    // changes. (Previously this ran on every composition, which snapped
+    // the tab row back to the current look's category the moment the
+    // user tapped any other tab — categories beyond the first were
+    // unreachable. That was the v0.2.0 Looks bug.)
+    LaunchedEffect(selectedLookId) {
+        Looks.CATEGORIES.firstOrNull { (_, looks) ->
+            looks.any { it.id == selectedLookId }
+        }?.let { category = it.first }
     }
     Column(modifier = modifier.background(PanelBg)) {
         ModeChips(
             options = Looks.CATEGORIES.map { it.first },
             selected = category,
-            onSelect = { category = it }
+            onSelect = { category = it },
+            modifier = Modifier.fillMaxWidth()
         )
         LazyRow(
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth()
         ) {
             items(looksInCategory, key = { it.id }) { look ->
                 val selected = look.id == selectedLookId
@@ -333,7 +340,35 @@ private val ADJUST_SLIDER_SPECS: List<SliderSpec> = listOf(
     SliderSpec("Grain", 0f..100f, { it.grain }, { a, v -> a.copy(grain = v) })
 )
 
-enum class AdjustTab { ADJUSTMENTS, SPLIT_TONE, COLOR_MIX, BLUR, VIGNETTE }
+/**
+ * Demo states for the adjustment thumbnail strip: each adjustment alone
+ * at +50 (or 50 for 0..100 sliders), rendered from the current photo.
+ */
+fun adjustThumbStates(): List<Pair<String, Adjustments>> =
+    ADJUST_STRIP_ORDER.mapNotNull { name ->
+        ADJUST_SLIDER_SPECS.firstOrNull { it.name == name }?.let { spec ->
+            name to spec.set(Adjustments(), 50f)
+        }
+    }
+
+enum class AdjustTab { ADJUSTMENTS, SPLIT_TONE, COLOR_MIX, BLUR, VIGNETTE, OPTICS }
+
+/**
+ * Strip order for the per-adjustment live thumbnails (Express order,
+ * with our Texture appended last — Express's strip has no Texture, but
+ * dropping an existing slider would be a feature cut, so it keeps its
+ * place at the end of the strip).
+ */
+private val ADJUST_STRIP_ORDER: List<String> = listOf(
+    "Clarity", "Sharpen", "Reduce Color Noise", "Reduce Luminance Noise",
+    "Dehaze", "Grain", "Fade", "Exposure", "Contrast", "Highlights",
+    "Shadows", "Whites", "Blacks", "Temperature", "Tint", "Vibrance",
+    "Saturation", "Texture"
+)
+
+private val ADJUST_TAB_LABELS = listOf(
+    "ADJUSTMENTS", "SPLIT TONE", "COLOR MIX", "BLUR", "VIGNETTE", "OPTICS"
+)
 
 @Composable
 fun AdjustmentsPanel(
@@ -350,98 +385,153 @@ fun AdjustmentsPanel(
     onDraftBlur: (BlurFx) -> Unit,
     onDraftVignette: (Vignette) -> Unit,
     onCommit: () -> Unit,
+    mask: AdjustMask,
+    onMask: (AdjustMask) -> Unit,
+    personFound: Boolean,
+    adjustThumbs: Map<String, Bitmap>,
+    maskThumbs: Map<AdjustMask, Bitmap>,
     modifier: Modifier = Modifier
 ) {
+    val stripSpecs = ADJUST_STRIP_ORDER.mapNotNull { name ->
+        ADJUST_SLIDER_SPECS.firstOrNull { it.name == name }
+    }
+    var selectedSpec by remember { mutableStateOf(stripSpecs.firstOrNull()) }
+    if (selectedSpec == null) selectedSpec = stripSpecs.firstOrNull()
     Column(modifier = modifier.background(PanelBg)) {
+        // Mask selector (Express Full / Subject / Background), with
+        // small thumbnails: Subject dims the background, Background dims
+        // the person. Without a detected person, selecting Subject or
+        // Background shows a plain "No person found" notice.
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            for (m in AdjustMask.values()) {
+                val selected = m == mask
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clickable { onMask(m) }
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF2A2A2A))
+                            .then(
+                                if (selected) Modifier.border(2.dp, Accent, RoundedCornerShape(8.dp))
+                                else Modifier
+                            )
+                    ) {
+                        maskThumbs[m]?.let { bmp ->
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = m.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.size(56.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        when (m) {
+                            AdjustMask.FULL -> "Full"
+                            AdjustMask.SUBJECT -> "Subject"
+                            AdjustMask.BACKGROUND -> "Background"
+                        },
+                        fontSize = 11.sp,
+                        color = if (selected) Color.White else Color(0xFFBDBDBD),
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                    )
+                }
+            }
+        }
+        if (mask != AdjustMask.FULL && !personFound) {
+            Text(
+                "No person found",
+                fontSize = 12.sp, color = Color(0xFF9E9E9E),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+            )
+        }
         ModeChips(
-            options = listOf("Adjustments", "Split Tone", "Color Mix", "Blur", "Vignette"),
+            options = ADJUST_TAB_LABELS,
             selected = when (adjustTab) {
-                AdjustTab.ADJUSTMENTS -> "Adjustments"
-                AdjustTab.SPLIT_TONE -> "Split Tone"
-                AdjustTab.COLOR_MIX -> "Color Mix"
-                AdjustTab.BLUR -> "Blur"
-                AdjustTab.VIGNETTE -> "Vignette"
+                AdjustTab.ADJUSTMENTS -> "ADJUSTMENTS"
+                AdjustTab.SPLIT_TONE -> "SPLIT TONE"
+                AdjustTab.COLOR_MIX -> "COLOR MIX"
+                AdjustTab.BLUR -> "BLUR"
+                AdjustTab.VIGNETTE -> "VIGNETTE"
+                AdjustTab.OPTICS -> "OPTICS"
             },
             onSelect = {
                 onAdjustTab(
                     when (it) {
-                        "Split Tone" -> AdjustTab.SPLIT_TONE
-                        "Color Mix" -> AdjustTab.COLOR_MIX
-                        "Blur" -> AdjustTab.BLUR
-                        "Vignette" -> AdjustTab.VIGNETTE
+                        "SPLIT TONE" -> AdjustTab.SPLIT_TONE
+                        "COLOR MIX" -> AdjustTab.COLOR_MIX
+                        "BLUR" -> AdjustTab.BLUR
+                        "VIGNETTE" -> AdjustTab.VIGNETTE
+                        "OPTICS" -> AdjustTab.OPTICS
                         else -> AdjustTab.ADJUSTMENTS
                     }
                 )
-            }
+            },
+            modifier = Modifier.fillMaxWidth()
         )
         when (adjustTab) {
             AdjustTab.ADJUSTMENTS -> {
-                var expanded by remember { mutableStateOf<String?>(null) }
-                LazyColumn(
-                    modifier = Modifier
-                        .heightIn(max = 300.dp)
+                // Per-adjustment live thumbnails: tapping one selects
+                // that adjustment for the single main slider below.
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(ADJUST_SLIDER_SPECS, key = { it.name }) { spec ->
+                    items(stripSpecs, key = { it.name }) { spec ->
+                        val selected = spec.name == selectedSpec?.name
                         val value = spec.get(adj)
-                        val isExpanded = expanded == spec.name
-                        Column {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { expanded = if (isExpanded) null else spec.name }
-                                    .padding(horizontal = 16.dp, vertical = 13.dp)
-                            ) {
-                                Text(spec.name, fontSize = 14.sp, color = Color.White, modifier = Modifier.weight(1f))
-                                if (value != 0f) {
-                                    IconButton(
-                                        onClick = { onDraftAdj(spec.set(adj, 0f)); onCommit() },
-                                        modifier = Modifier.size(28.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Filled.RestartAlt,
-                                            contentDescription = "Reset ${spec.name}",
-                                            tint = Color(0xFFBDBDBD),
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                    }
-                                }
-                                Text(
-                                    formatSliderValue(value),
-                                    fontSize = 13.sp,
-                                    color = if (value != 0f) Accent else Color(0xFF9E9E9E),
-                                    modifier = Modifier.width(36.dp)
-                                )
-                                Icon(
-                                    if (isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                    contentDescription = null,
-                                    tint = Color(0xFF9E9E9E),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            if (isExpanded) {
-                                Slider(
-                                    value = value,
-                                    onValueChange = { onDraftAdj(spec.set(adj, it)) },
-                                    onValueChangeFinished = onCommit,
-                                    valueRange = spec.range,
-                                    colors = SliderDefaults.colors(
-                                        thumbColor = Accent,
-                                        activeTrackColor = Accent,
-                                        inactiveTrackColor = Color(0xFF4A4A4A)
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp)
-                                )
-                            }
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.clickable { selectedSpec = spec }
+                        ) {
                             Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(0.7.dp)
-                                    .background(Color(0xFF2C2C2C))
+                                modifier = Modifier
+                                    .size(64.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF2A2A2A))
+                                    .then(
+                                        if (selected) Modifier.border(2.dp, Accent, RoundedCornerShape(8.dp))
+                                        else Modifier
+                                    )
+                            ) {
+                                adjustThumbs[spec.name]?.let { bmp ->
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = spec.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.size(64.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                spec.name,
+                                fontSize = 11.sp,
+                                color = if (selected) Color.White else Color(0xFFBDBDBD),
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                            Text(
+                                formatSliderValue(value),
+                                fontSize = 11.sp,
+                                color = if (value != 0f) Accent else Color(0xFF9E9E9E)
                             )
                         }
+                    }
+                }
+                selectedSpec?.let { spec ->
+                    Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        ToolSlider(
+                            spec.name, spec.get(adj), spec.range,
+                            { onDraftAdj(spec.set(adj, it)) }, onCommit
+                        )
                     }
                 }
             }
@@ -477,7 +567,8 @@ fun AdjustmentsPanel(
                         selected = ColorMath.MIX_CHANNELS[channel].first,
                         onSelect = { name ->
                             channel = ColorMath.MIX_CHANNELS.indexOfFirst { it.first == name }.coerceAtLeast(0)
-                        }
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     )
                     Column(Modifier.padding(horizontal = 16.dp)) {
                         ToolSlider(
@@ -533,7 +624,8 @@ fun AdjustmentsPanel(
                                 )
                             )
                             onCommit()
-                        }
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     )
                     ToolSlider(
                         "Amount", blur.amount, 0f..100f,
@@ -583,6 +675,21 @@ fun AdjustmentsPanel(
                     ToolSlider(
                         "Roundness", vignette.roundness, -100f..100f,
                         { onDraftVignette(vignette.copy(roundness = it)) }, onCommit
+                    )
+                }
+            }
+            AdjustTab.OPTICS -> {
+                // Express itself shows this for photos without a lens
+                // profile; we do not invent lens-profile correction.
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Lens profile unavailable", fontSize = 15.sp, color = Color.White)
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "No lens profile for this photo.",
+                        fontSize = 12.sp, color = Color(0xFF9E9E9E)
                     )
                 }
             }
