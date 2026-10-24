@@ -292,6 +292,13 @@ object AdjustStages {
      * the frame edges. [midPoint] 0..100 is where the falloff starts,
      * [feather] 0..100 its softness, [roundness] -100..100 morphs the
      * falloff shape from rectangular (-100) to circular (+100).
+     *
+     * The falloff curve is a smoothstep (f²·(3−2f)) over the feather
+     * zone, not a bare quadratic: its slope is zero at both ends of the
+     * zone, so there is no visible seam where the falloff starts or
+     * ends and no banding steps in between. Channels are rounded, not
+     * truncated, for the same reason. This exact function backs both
+     * the live preview and the export render.
      */
     fun vignette(
         src: IntArray, w: Int, h: Int,
@@ -315,18 +322,30 @@ object AdjustStages {
                 val rect = max(abs(nx), abs(ny))
                 val t = (rnd + 1f) / 2f
                 val dist = rect * (1f - t) + circ * t
-                val fall = ((dist - mid) / fea).coerceIn(0f, 1f)
-                val f = 1f - k * fall * fall
+                val lin = ((dist - mid) / fea).coerceIn(0f, 1f)
+                val fall = lin * lin * (3f - 2f * lin)
+                val f = 1f - k * fall
                 val i = y * w + x
                 val p = src[i]
                 out[i] = pack(
                     p and -0x1000000,
-                    (r(p) * f).toInt(),
-                    (g(p) * f).toInt(),
-                    (b(p) * f).toInt()
+                    (r(p) * f + 0.5f).toInt(),
+                    (g(p) * f + 0.5f).toInt(),
+                    (b(p) * f + 0.5f).toInt()
                 )
             }
         }
         return out
+    }
+
+    /** The vignette multiplier at one normalized distance (for tests). */
+    fun vignetteFactor(
+        dist: Float, amount: Float, midPoint: Float, feather: Float
+    ): Float {
+        val k = amount / 100f
+        val mid = (midPoint / 100f).coerceIn(0f, 1f)
+        val fea = (feather / 100f).coerceIn(0.01f, 1f)
+        val lin = ((dist - mid) / fea).coerceIn(0f, 1f)
+        return 1f - k * lin * lin * (3f - 2f * lin)
     }
 }
