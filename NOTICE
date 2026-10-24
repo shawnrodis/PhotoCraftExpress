@@ -1,0 +1,70 @@
+PhotoCraft Express — Notices and Attribution
+=============================================
+
+PhotoCraft
+----------
+
+Portions of this project's image-adjustment mathematics are adapted from
+PhotoCraft, an open-source, clean-room photo editor written in pure Rust.
+
+    Project:  PhotoCraft
+    Authors:  storytold / the ArtCraft Team and the PhotoCraft contributors
+    Source:   https://github.com/storytold/photocraft
+    License:  MIT OR Apache-2.0 (dual-licensed; see licenses/)
+
+The full license texts are included in this repository:
+
+    licenses/PhotoCraft-LICENSE-MIT.txt
+    licenses/PhotoCraft-LICENSE-APACHE-2.0.txt
+
+What PhotoCraft Express takes from PhotoCraft is image-adjustment and
+filter mathematics — nothing else. Specifically:
+
+  CONSULTED (read as the reference for how the operations should behave):
+    - The overall adjustment model of the photocraft-compose crate
+      (crates/compose/src/adjust.rs): Levels, Curves, Vibrance,
+      Hue/Saturation, Exposure.
+    - Hue/Saturation scaling semantics and the white-balance approach in
+      the raw/develop code, used as background reading only.
+
+  ADAPTED (PhotoCraft algorithms re-implemented in Kotlin in
+  app/src/main/java/com/shawnrodis/photocraftexpress/engine/AdjustMath.kt,
+  and used by engine/Looks.kt; each file carries a header noting this):
+    - Levels midtone gamma, including its fitted shadow "toe"
+      (PhotoCraft's `levels_gamma`), and the Levels transform structure
+      of input stretch -> gamma -> output range (`levels_float`).
+    - The Curves LUT built from a natural cubic spline through control
+      points (PhotoCraft's `curve_lut`).
+    - The Vibrance pixel model (PhotoCraft's `vibrance_lin`): the
+      hue-preserving saturation change, its fitted boost coefficients,
+      and its skin-tone damping by hue.
+    - The Saturation grey weights 0.288 R + 0.712 G (from PhotoCraft's
+      `vibrance_px`).
+
+  Documented adaptations: PhotoCraft applies these operations in linear
+  light through a document transfer curve and samples its LUTs at 4096
+  entries for float pipelines. This app applies the same mathematics
+  directly to sRGB-encoded values and samples LUTs at 256 entries for an
+  8-bit mobile pipeline. Exposure is applied through a 2.2-gamma round
+  trip inside the tone LUT. These choices change shadow weighting
+  slightly; the algorithms' structure and fitted constants are
+  PhotoCraft's.
+
+Everything else in this repository — all Android code, the whole user
+interface, the icon artwork, the crop/geometry engine, the undo history,
+the MediaStore/export code, and all Look recipes — is original work
+written for PhotoCraft Express.
+
+PhotoCraft Express is not affiliated with, sponsored by, or endorsed by
+storytold, the ArtCraft Team, or the PhotoCraft contributors.
+
+Adobe / Photoshop Express
+-------------------------
+
+The editor's interface recreates the layout and flow of Adobe Photoshop
+Express (Android) — home grid, editor chrome, bottom tool carousel —
+using entirely original code and hand-drawn vector icons. No Adobe code,
+assets, logos, or artwork are used. "Photoshop" and "Photoshop Express"
+are trademarks of Adobe Inc.; they are named here and in the README only
+to identify the interface this project recreates. PhotoCraft Express is
+not affiliated with, sponsored by, or endorsed by Adobe Inc.
