@@ -24,6 +24,37 @@ The interface recreates Photoshop Express's layout and flow with original
 artwork — no Adobe code, assets or logos. PhotoCraft Express is **not
 affiliated with or endorsed by storytold/ArtCraft or Adobe Inc.**
 
+## What changed in v0.2.3
+
+- **Adjustments panel, one continuous strip** — like Looks in v0.2.2:
+  the 18 adjustment thumbnails, Split Tone's parameters, Color Mix's
+  channels, Blur's modes and parameters, Vignette's parameters and
+  Optics now flow as a single horizontally scrolling strip in tab
+  order. The tab row tracks the strip position, tapping a tab jumps
+  the strip to that section, and the single slider follows the
+  selected strip item across sections. The v0.2.2 chip + single-slider
+  layouts are unchanged inside each section; only the strip/tab
+  behavior changed. The mask selector row on top is unchanged, and
+  the Looks strip and its 87-preset catalog are untouched.
+- **Crop: zoom while cropping** — v0.2.1 deliberately disabled zoom
+  during Crop; that was the wrong call for Express parity. Pinch-zoom
+  and pan now work inside Crop (and double-tap toggles zoom), with
+  the crop overlay tracking the zoomed image.
+- **Crop: handles that actually track your finger** — the old overlay
+  had its own drag detector, corners only, no edge handles at all, so
+  edge drags either moved the whole rect or did nothing, and it
+  passed the raw pixel ratio as the normalized aspect lock (wrong
+  ratio on non-square photos). Crop input now flows through the one
+  canvas gesture gate: corner AND edge handles with a 56dp screen
+  grab radius that stays constant at any zoom (hit-testing runs in
+  screen space through the zoom), live resize on corner/edge drags,
+  live move on inside drags, draft-during-drag with a single commit
+  on release like every other tool. The overlay is draw-only now.
+  (Honest residuals: Transform-tab handles still use their own
+  detectors and raw pixel deltas, so their drags don't yet account
+  for zoom the way the rect handles do; and pinch-plus-handle-drag
+  at the same instant is untested on a real phone.)
+
 ## What changed in v0.2.2 (correction release)
 
 - **Live sliders, actually fixed this time** — v0.2.1's "live sliders"

@@ -1,30 +1,32 @@
 package com.shawnrodis.photocraftexpress.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import com.shawnrodis.photocraftexpress.engine.CropCorner
-import com.shawnrodis.photocraftexpress.engine.CropGeometry
 import com.shawnrodis.photocraftexpress.engine.CropRect
-import kotlin.math.abs
+import com.shawnrodis.photocraftexpress.engine.ZoomState
+import com.shawnrodis.photocraftexpress.engine.fitFrame
+import com.shawnrodis.photocraftexpress.engine.normToScreen
 
 /**
- * The crop interaction layer drawn over the (uncropped) photo: dimmed
- * surround, rule-of-thirds grid, corner handles. Dragging inside moves the
- * rect; dragging a corner resizes it. [onCommit] fires once per drag.
+ * The crop interaction layer, DRAW-ONLY since v0.2.3: all input flows
+ * through the canvas gesture gate (single-finger crop drags, two-finger
+ * pinch/pan, double-tap zoom), so there is exactly one detector and no
+ * gate can swallow a crop drag. This layer draws the dimmed surround,
+ * rule-of-thirds grid, border, corner handles and (new) edge handles.
+ *
+ * It sits OUTSIDE the zoom layer and maps the rect to screen px
+ * explicitly through [zoom], so handles stay constant screen size at
+ * any zoom (inside the zoom layer they would scale up with the image)
+ * and the drawn rect always aligns with the zoomed image: both use the
+ * same fit frame + ZoomState.forward mapping.
  */
 @Composable
 fun CropOverlay(
@@ -32,119 +34,65 @@ fun CropOverlay(
     imageWidth: Int,
     imageHeight: Int,
     crop: CropRect,
-    aspectNorm: Float?,
-    onCommit: (CropRect) -> Unit,
+    zoom: ZoomState,
     modifier: Modifier = Modifier
 ) {
-    var local by remember(crop) { mutableStateOf(crop) }
-
-    // Fit rect of the image inside the container (ContentScale.Fit maths).
     val cw = containerSize.width.toFloat()
     val ch = containerSize.height.toFloat()
     if (cw <= 0f || ch <= 0f || imageWidth <= 0 || imageHeight <= 0) return
-    val scale = minOf(cw / imageWidth, ch / imageHeight)
-    val dispW = imageWidth * scale
-    val dispH = imageHeight * scale
-    val offX = (cw - dispW) / 2f
-    val offY = (ch - dispH) / 2f
+    val fit = fitFrame(cw, ch, imageWidth, imageHeight)
+    // Screen px of the rect's corners, through the zoom.
+    val (lx, ty) = normToScreen(fit, zoom, crop.left, crop.top)
+    val (rx, by) = normToScreen(fit, zoom, crop.right, crop.bottom)
 
-    fun toNorm(p: Offset): Pair<Float, Float> =
-        ((p.x - offX) / dispW).coerceIn(0f, 1f) to ((p.y - offY) / dispH).coerceIn(0f, 1f)
-
-    var dragMode by remember { mutableStateOf<DragMode>(DragMode.None) }
-    var startRect by remember { mutableStateOf(crop) }
-    var startNorm by remember { mutableStateOf(0f to 0f) }
-
-    Canvas(
-        modifier = modifier
-            .fillMaxSize()
-            .pointerInput(imageWidth, imageHeight, containerSize) {
-                detectDragGestures(
-                    onDragStart = { pos ->
-                        val (nx, ny) = toNorm(pos)
-                        startNorm = nx to ny
-                        startRect = local
-                        val handlePx = 44.dp.toPx()
-                        val corners = listOf(
-                            CropCorner.TOP_LEFT to Offset(offX + local.left * dispW, offY + local.top * dispH),
-                            CropCorner.TOP_RIGHT to Offset(offX + local.right * dispW, offY + local.top * dispH),
-                            CropCorner.BOTTOM_LEFT to Offset(offX + local.left * dispW, offY + local.bottom * dispH),
-                            CropCorner.BOTTOM_RIGHT to Offset(offX + local.right * dispW, offY + local.bottom * dispH)
-                        )
-                        val near = corners.firstOrNull { (_, c) ->
-                            abs(c.x - pos.x) <= handlePx && abs(c.y - pos.y) <= handlePx
-                        }
-                        dragMode = when {
-                            near != null -> DragMode.Corner(near.first)
-                            nx in local.left..local.right && ny in local.top..local.bottom -> DragMode.Move
-                            else -> DragMode.None
-                        }
-                    },
-                    onDrag = { change, _ ->
-                        val (nx, ny) = toNorm(change.position)
-                        val dx = nx - startNorm.first
-                        val dy = ny - startNorm.second
-                        local = when (val mode = dragMode) {
-                            is DragMode.Corner -> CropGeometry.resizeCorner(
-                                startRect, mode.corner, nx, ny, aspectNorm
-                            )
-                            DragMode.Move -> CropGeometry.moveRect(startRect, dx, dy)
-                            DragMode.None -> local
-                        }
-                    },
-                    onDragEnd = {
-                        if (dragMode != DragMode.None && local != crop) onCommit(local)
-                        dragMode = DragMode.None
-                    },
-                    onDragCancel = {
-                        local = crop
-                        dragMode = DragMode.None
-                    }
-                )
-            }
-    ) {
-        val l = offX + local.left * dispW
-        val t = offY + local.top * dispH
-        val r = offX + local.right * dispW
-        val b = offY + local.bottom * dispH
+    Canvas(modifier = modifier.fillMaxSize()) {
         val scrim = Color.Black.copy(alpha = 0.55f)
-        // Dimmed surround.
-        drawRect(scrim, Offset(offX, offY), Size(dispW, t - offY))
-        drawRect(scrim, Offset(offX, b), Size(dispW, offY + dispH - b))
-        drawRect(scrim, Offset(offX, t), Size(l - offX, b - t))
-        drawRect(scrim, Offset(r, t), Size(offX + dispW - r, b - t))
+        // Dimmed surround, clipped to the canvas (only positive sizes).
+        fun dim(x: Float, y: Float, w: Float, h: Float) {
+            val cx0 = x.coerceIn(0f, size.width)
+            val cy0 = y.coerceIn(0f, size.height)
+            val cx1 = (x + w).coerceIn(0f, size.width)
+            val cy1 = (y + h).coerceIn(0f, size.height)
+            if (cx1 > cx0 && cy1 > cy0) drawRect(scrim, Offset(cx0, cy0), Size(cx1 - cx0, cy1 - cy0))
+        }
+        dim(0f, 0f, size.width, ty)
+        dim(0f, by, size.width, size.height - by)
+        dim(0f, ty, lx, by - ty)
+        dim(rx, ty, size.width - rx, by - ty)
         // Rule-of-thirds grid.
         val grid = Color.White.copy(alpha = 0.4f)
         for (i in 1..2) {
-            val gx = l + (r - l) * i / 3f
-            val gy = t + (b - t) * i / 3f
-            drawLine(grid, Offset(gx, t), Offset(gx, b), strokeWidth = 1.dp.toPx())
-            drawLine(grid, Offset(l, gy), Offset(r, gy), strokeWidth = 1.dp.toPx())
+            val gx = lx + (rx - lx) * i / 3f
+            val gy = ty + (by - ty) * i / 3f
+            drawLine(grid, Offset(gx, ty), Offset(gx, by), strokeWidth = 1.dp.toPx())
+            drawLine(grid, Offset(lx, gy), Offset(rx, gy), strokeWidth = 1.dp.toPx())
         }
         // Border.
         drawRect(
-            Color.White, Offset(l, t), Size(r - l, b - t),
+            Color.White, Offset(lx, ty), Size(rx - lx, by - ty),
             style = Stroke(width = 1.5.dp.toPx())
         )
         // Corner handles (L-shaped, thicker).
         val arm = 20.dp.toPx()
         val hw = 3.5.dp.toPx()
         val corners = listOf(
-            Triple(Offset(l, t), 1f to 1f, Unit),
-            Triple(Offset(r, t), -1f to 1f, Unit),
-            Triple(Offset(l, b), 1f to -1f, Unit),
-            Triple(Offset(r, b), -1f to -1f, Unit)
+            Triple(Offset(lx, ty), 1f to 1f, Unit),
+            Triple(Offset(rx, ty), -1f to 1f, Unit),
+            Triple(Offset(lx, by), 1f to -1f, Unit),
+            Triple(Offset(rx, by), -1f to -1f, Unit)
         )
         for ((c, dir) in corners) {
             val (sx, sy) = dir
             drawLine(Color.White, c, Offset(c.x + arm * sx, c.y), strokeWidth = hw)
             drawLine(Color.White, c, Offset(c.x, c.y + arm * sy), strokeWidth = hw)
         }
+        // Edge handles (short bars at the edge midpoints, matching the
+        // v0.2.3 edge-drag targets in the gesture gate).
+        val midX = (lx + rx) / 2f
+        val midY = (ty + by) / 2f
+        drawLine(Color.White, Offset(midX - arm / 2f, ty), Offset(midX + arm / 2f, ty), strokeWidth = hw)
+        drawLine(Color.White, Offset(midX - arm / 2f, by), Offset(midX + arm / 2f, by), strokeWidth = hw)
+        drawLine(Color.White, Offset(lx, midY - arm / 2f), Offset(lx, midY + arm / 2f), strokeWidth = hw)
+        drawLine(Color.White, Offset(rx, midY - arm / 2f), Offset(rx, midY + arm / 2f), strokeWidth = hw)
     }
-}
-
-private sealed interface DragMode {
-    object None : DragMode
-    object Move : DragMode
-    data class Corner(val corner: CropCorner) : DragMode
 }

@@ -98,8 +98,14 @@ import com.shawnrodis.photocraftexpress.engine.BackgroundFx
 import com.shawnrodis.photocraftexpress.engine.BlurFx
 import com.shawnrodis.photocraftexpress.engine.BorderFx
 import com.shawnrodis.photocraftexpress.engine.ColorMix
+import com.shawnrodis.photocraftexpress.engine.CropCorner
+import com.shawnrodis.photocraftexpress.engine.CropDragKind
+import com.shawnrodis.photocraftexpress.engine.CropEdge
 import com.shawnrodis.photocraftexpress.engine.CropGeometry
 import com.shawnrodis.photocraftexpress.engine.CropRect
+import com.shawnrodis.photocraftexpress.engine.cropHandleAt
+import com.shawnrodis.photocraftexpress.engine.fitFrame
+import com.shawnrodis.photocraftexpress.engine.fractionToNorm
 import com.shawnrodis.photocraftexpress.engine.DrawStroke
 import com.shawnrodis.photocraftexpress.engine.EditHistory
 import com.shawnrodis.photocraftexpress.engine.EditState
@@ -725,8 +731,100 @@ fun EditorScreen(
         commitDraft()
     }
 
+    // --- Crop drag state (v0.2.3: gate-driven, zoom-aware) -----------
+    // The gate owns crop input now, so these live here, not in the
+    // overlay. A drag drafts every move and commits once on release,
+    // like every other tool drag.
+    var cropDragStartRect by remember { mutableStateOf<CropRect?>(null) }
+    var cropDragStartNorm by remember { mutableStateOf(0f to 0f) }
+    val cropDensity = LocalDensity.current
+    // Handle grab radius in screen px: far beyond the 20dp visible
+    // handle arm, and constant at any zoom (the hit test runs in
+    // screen space, not in zoomed image space).
+    val cropHandleRadiusPx = with(cropDensity) { 56.dp.toPx() }
+
+    /** Aspect lock in normalized units, or null for free crops. */
+    fun cropAspectNorm(): Float? {
+        val pv = preview ?: return null
+        val ratio = (aspectSel as? AspectSel.Fixed)?.ratio ?: return null
+        if (canvasSize.width <= 0 || canvasSize.height <= 0) return ratio
+        val fit = fitFrame(
+            canvasSize.width.toFloat(), canvasSize.height.toFloat(),
+            pv.width, pv.height
+        )
+        if (fit.dispW <= 0f || fit.dispH <= 0f) return ratio
+        // Normalized ratio = pixel ratio scaled by the frame: a 1:1
+        // pixel square is NOT 1:1 in normalized units unless the frame
+        // itself is square (the old overlay passed the raw ratio here,
+        // so aspect-locked corner drags held the wrong ratio on
+        // non-square photos).
+        return ratio * fit.dispH / fit.dispW
+    }
+
+    fun onCropHitTest(px: Float, py: Float): CropDragKind {
+        val pv = preview ?: return CropDragKind.None
+        if (canvasSize.width <= 0) return CropDragKind.None
+        val fit = fitFrame(
+            canvasSize.width.toFloat(), canvasSize.height.toFloat(),
+            pv.width, pv.height
+        )
+        return cropHandleAt(
+            cur.crop, fit, zoom, px, py, cropHandleRadiusPx
+        )
+    }
+
+    fun onCropDragStart(kind: CropDragKind, fx: Float, fy: Float) {
+        val pv = preview ?: return
+        if (canvasSize.width <= 0) return
+        val fit = fitFrame(
+            canvasSize.width.toFloat(), canvasSize.height.toFloat(),
+            pv.width, pv.height
+        )
+        cropDragStartRect = cur.crop
+        cropDragStartNorm = fractionToNorm(fit, fx, fy)
+    }
+
+    fun onCropDrag(kind: CropDragKind, fx: Float, fy: Float) {
+        val start = cropDragStartRect ?: return
+        val pv = preview ?: return
+        if (canvasSize.width <= 0) return
+        val fit = fitFrame(
+            canvasSize.width.toFloat(), canvasSize.height.toFloat(),
+            pv.width, pv.height
+        )
+        val (nx, ny) = fractionToNorm(fit, fx, fy)
+        val (sx, sy) = cropDragStartNorm
+        val next = when (kind) {
+            is CropDragKind.Corner -> CropGeometry.resizeCorner(
+                start, kind.corner, nx, ny, cropAspectNorm()
+            )
+            is CropDragKind.Edge -> CropGeometry.resizeEdge(
+                start, kind.edge, nx, ny, cropAspectNorm()
+            )
+            CropDragKind.Move -> CropGeometry.moveRect(start, nx - sx, ny - sy)
+            CropDragKind.None -> cur.crop
+        }
+        if (next != cur.crop) draftTo(cur.copy(crop = next))
+    }
+
+    fun onCropDragEnd() {
+        cropDragStartRect = null
+        commitDraft()
+    }
+
+    fun onCropDragCancel() {
+        // Second finger mid-drag: restore the pre-drag rect without
+        // committing, so the pinch starts clean.
+        cropDragStartRect?.let { draftTo(cur.copy(crop = it)) }
+        cropDragStartRect = null
+    }
+
     val gestureModifier = canvasGestureModifier(
-        active = tool != EditorTool.Crop && !splitCompare,
+        // v0.2.3: the gate runs during Crop too — it owns crop drags
+        // and pinch/double-tap zoom there. Split-compare keeps the gate
+        // off (its divider has its own drag) for non-Crop tools; the
+        // Crop tool never shows the split view.
+        active = tool == EditorTool.Crop || !splitCompare,
         zoom = zoom,
         onZoomChange = { zoom = it },
         onDoubleTap = { x, y -> zoom = zoom.toggleAt(x, y) },
@@ -740,7 +838,17 @@ fun EditorScreen(
         onTap = { x, y -> onCanvasTap(x, y) },
         onDragStart = { x, y -> onCanvasDragStart(x, y) },
         onDrag = { x, y -> onCanvasDrag(x, y) },
-        onDragEnd = { onCanvasDragEnd() }
+        onDragEnd = { onCanvasDragEnd() },
+        cropHitTest = if (tool == EditorTool.Crop && cropTab != CropTab.TRANSFORM) {
+            { px, py -> onCropHitTest(px, py) }
+        } else {
+            null
+        },
+        cropDragStart = { kind, fx, fy -> onCropDragStart(kind, fx, fy) },
+        cropDrag = { kind, fx, fy -> onCropDrag(kind, fx, fy) },
+        cropDragEnd = { onCropDragEnd() },
+        cropDragCancel = { onCropDragCancel() },
+        cropPassthrough = tool == EditorTool.Crop && cropTab == CropTab.TRANSFORM
     )
 
     // --- Crop handlers ---------------------------------------------------
@@ -915,29 +1023,39 @@ fun EditorScreen(
                         )
                     }
                 }
-                // Crop interaction layers.
-                if (!showOriginal && tool == EditorTool.Crop && canvasSize.width > 0) {
-                    if (cropTab == CropTab.TRANSFORM) {
-                        TransformHandles(
-                            quad = cur.transform ?: WarpMath.Quad.IDENTITY,
-                            canvasSize = canvasSize,
-                            onDraft = { q -> draftTo(cur.copy(transform = q)) },
-                            onCommit = { commitDraft() }
-                        )
-                    } else {
-                        preview?.let { pv ->
-                            CropOverlay(
-                                containerSize = canvasSize,
-                                imageWidth = pv.width,
-                                imageHeight = pv.height,
-                                crop = cur.crop,
-                                aspectNorm = (aspectSel as? AspectSel.Fixed)?.ratio,
-                                onCommit = { newCrop -> commitDirect(cur.copy(crop = newCrop)) }
-                            )
-                        }
-                    }
+                // Crop TRANSFORM handles stay in the zoom layer (their
+                // coords are canvas fractions, so they scale with it).
+                if (!showOriginal && tool == EditorTool.Crop && canvasSize.width > 0 &&
+                    cropTab == CropTab.TRANSFORM
+                ) {
+                    TransformHandles(
+                        quad = cur.transform ?: WarpMath.Quad.IDENTITY,
+                        canvasSize = canvasSize,
+                        onDraft = { q -> draftTo(cur.copy(transform = q)) },
+                        onCommit = { commitDraft() }
+                    )
                 }
                 } // end zoom layer
+                // Crop rect overlay: draw-only, OUTSIDE the zoom layer,
+                // mapping the rect to screen px explicitly through the
+                // zoom (see CropOverlay) so handles stay constant screen
+                // size and always align with the zoomed image. The
+                // gesture gate owns its input; touches pass through
+                // this layer (it has no pointer input of its own).
+                if (!showOriginal && tool == EditorTool.Crop && canvasSize.width > 0 &&
+                    cropTab != CropTab.TRANSFORM
+                ) {
+                    preview?.let { pv ->
+                        CropOverlay(
+                            containerSize = canvasSize,
+                            imageWidth = pv.width,
+                            imageHeight = pv.height,
+                            crop = cur.crop,
+                            zoom = zoom,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
                 if (zoom.isZoomed) {
                     // Reset affordance, unzoomed chrome above the canvas.
                     Box(
@@ -1448,8 +1566,17 @@ fun EditorScreen(
 /**
  * One pointer-input gate for the canvas: taps for Heal / Eyes / Stickers /
  * Text / Insert selection, drags for Draw / Reshape / Insert brush /
- * layer moves / radial-blur ellipse. A drag only starts after the touch
- * slop, so taps and drags never double-fire.
+ * layer moves / radial-blur ellipse, and (v0.2.3) crop-rect drags.
+ * Crop used to have its own detector on the overlay, separate from this
+ * gate — with zoom disabled during Crop, and edge drags that either
+ * moved the whole rect or did nothing (there were no edge handles).
+ * Now the gate owns crop input too: single-finger corner/edge/move
+ * drags, two-finger pinch/pan zoom, double-tap zoom toggle, all through
+ * the same zoom mapping. A drag only starts after the touch slop, so
+ * taps and drags never double-fire. [cropPassthrough] (Crop Transform
+ * tab) observes single-finger touches without consuming them, so the
+ * Transform handles' own detectors keep working, while pinch and
+ * double-tap zoom still run.
  */
 @Composable
 private fun canvasGestureModifier(
@@ -1461,7 +1588,13 @@ private fun canvasGestureModifier(
     onTap: (Float, Float) -> Unit,
     onDragStart: (Float, Float) -> Unit,
     onDrag: (Float, Float) -> Unit,
-    onDragEnd: () -> Unit
+    onDragEnd: () -> Unit,
+    cropHitTest: ((Float, Float) -> CropDragKind)? = null,
+    cropDragStart: ((CropDragKind, Float, Float) -> Unit)? = null,
+    cropDrag: ((CropDragKind, Float, Float) -> Unit)? = null,
+    cropDragEnd: (() -> Unit)? = null,
+    cropDragCancel: (() -> Unit)? = null,
+    cropPassthrough: Boolean = false
 ): Modifier {
     if (!active) return Modifier
     val zoomRef = rememberUpdatedState(zoom)
@@ -1472,6 +1605,11 @@ private fun canvasGestureModifier(
     val dragStartRef = rememberUpdatedState(onDragStart)
     val dragRef = rememberUpdatedState(onDrag)
     val dragEndRef = rememberUpdatedState(onDragEnd)
+    val cropHitTestRef = rememberUpdatedState(cropHitTest)
+    val cropDragStartRef = rememberUpdatedState(cropDragStart)
+    val cropDragRef = rememberUpdatedState(cropDrag)
+    val cropDragEndRef = rememberUpdatedState(cropDragEnd)
+    val cropDragCancelRef = rememberUpdatedState(cropDragCancel)
     return Modifier.pointerInput(Unit) {
         // Double-tap detection lives across gestures (same
         // pointer-input scope), so it survives each awaitEachGesture.
@@ -1481,6 +1619,8 @@ private fun canvasGestureModifier(
             val down = awaitFirstDown()
             var last = down.position
             var dragging = false
+            var cropKind: CropDragKind? = null
+            var cropDecided = false
             var transforming = false
             var zoomAtStart = zoomRef.value
             var centroidAtStart = Offset.Zero
@@ -1498,11 +1638,16 @@ private fun canvasGestureModifier(
                 val pressed = ev.changes.filter { it.pressed }
                 if (pressed.size >= 2 && !transforming) {
                     // Second finger down: cancel any in-progress tool
-                    // drag (its partial state is restored, uncommitted)
-                    // and switch to pinch/pan for the rest of the gesture.
+                    // or crop drag (its partial state is restored,
+                    // uncommitted) and switch to pinch/pan for the rest
+                    // of the gesture.
                     if (dragging) {
                         dragCancelRef.value()
                         dragging = false
+                    }
+                    if (cropKind != null) {
+                        cropDragCancelRef.value?.invoke()
+                        cropKind = null
                     }
                     transforming = true
                     zoomAtStart = zoomRef.value
@@ -1555,7 +1700,12 @@ private fun canvasGestureModifier(
                 if (!ch.pressed) {
                     if (dragging) {
                         dragEndRef.value()
+                    } else if (cropKind != null) {
+                        cropDragEndRef.value?.invoke()
+                        cropKind = null
                     } else {
+                        // Passthrough included: taps are no-ops for the
+                        // Crop tool, but double-tap zoom still applies.
                         val now = System.currentTimeMillis()
                         val (nx, ny) = norm(last)
                         if (now - lastTapTime < 300L &&
@@ -1571,6 +1721,31 @@ private fun canvasGestureModifier(
                     }
                     ch.consume()
                     done = true
+                } else if (cropPassthrough) {
+                    // Transform tab: handles own single-finger drags.
+                    // Observe only (for double-tap tracking) — never
+                    // consume, so the handles' detector keeps the drag.
+                    last = ch.position
+                } else if (cropHitTestRef.value != null) {
+                    // Crop rect mode: the gate owns the drag. Hit-test
+                    // at the DOWN position (where the finger landed),
+                    // then drive the drag from unzoomed fractions.
+                    val dist = (ch.position - down.position).getDistance()
+                    if (!cropDecided && dist > 8f) {
+                        cropDecided = true
+                        val kind = cropHitTestRef.value!!(down.position.x, down.position.y)
+                        if (kind != CropDragKind.None) {
+                            cropKind = kind
+                            val (sx, sy) = norm(down.position)
+                            cropDragStartRef.value?.invoke(kind, sx, sy)
+                        }
+                    }
+                    if (cropKind != null) {
+                        val (nx, ny) = norm(ch.position)
+                        cropDragRef.value?.invoke(cropKind!!, nx, ny)
+                        last = ch.position
+                    }
+                    ch.consume()
                 } else {
                     val dist = (ch.position - down.position).getDistance()
                     if (!dragging && dist > 8f) {

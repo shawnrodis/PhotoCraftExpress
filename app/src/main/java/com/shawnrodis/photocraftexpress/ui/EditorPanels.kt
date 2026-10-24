@@ -709,6 +709,220 @@ private val ADJUST_TAB_LABELS = listOf(
     "ADJUSTMENTS", "SPLIT TONE", "COLOR MIX", "BLUR", "VIGNETTE", "OPTICS"
 )
 
+// ----------------------------------------------------------------------
+// Adjustments: one continuous strip (v0.2.3)
+// ----------------------------------------------------------------------
+
+/**
+ * One item of the continuous Adjustments strip, mirroring the Looks
+ * strip model from v0.2.2: sections flow as a single row in tab order,
+ * the tab row tracks the strip position, and tapping a tab jumps the
+ * strip to that section. Kept as top-level data so strip order, section
+ * boundaries and tap-to-jump targets are unit-testable without composing
+ * anything.
+ */
+sealed interface AdjustStripEntry {
+    val section: AdjustTab
+    val key: String
+    data class Adjustment(val specName: String) : AdjustStripEntry {
+        override val section = AdjustTab.ADJUSTMENTS
+        override val key = "adj:$specName"
+    }
+    data class SplitToneParam(val label: String) : AdjustStripEntry {
+        override val section = AdjustTab.SPLIT_TONE
+        override val key = "st:$label"
+    }
+    data class ColorMixChannel(val channel: Int) : AdjustStripEntry {
+        override val section = AdjustTab.COLOR_MIX
+        override val key = "cm:$channel"
+    }
+    data class BlurModeEntry(val mode: BlurMode) : AdjustStripEntry {
+        override val section = AdjustTab.BLUR
+        override val key = "bm:${mode.name}"
+    }
+    data class BlurParam(val label: String) : AdjustStripEntry {
+        override val section = AdjustTab.BLUR
+        override val key = "bp:$label"
+    }
+    data class VignetteParam(val label: String) : AdjustStripEntry {
+        override val section = AdjustTab.VIGNETTE
+        override val key = "vg:$label"
+    }
+    object Optics : AdjustStripEntry {
+        override val section = AdjustTab.OPTICS
+        override val key = "optics"
+    }
+}
+
+/**
+ * Flat Adjustments strip in tab order: the 18 adjustment thumbnails,
+ * Split Tone's parameters, Color Mix's channels, Blur's modes and
+ * parameters, Vignette's parameters, then Optics. Blur's Width/Height
+ * (and Feather/Roundness) only exist while the Radial ellipse is
+ * active — with any other mode only Amount is offered, exactly as the
+ * v0.2.2 Blur section did — so the strip length depends on [blurMode].
+ */
+fun adjustStripEntries(blurMode: BlurMode): List<AdjustStripEntry> {
+    val blurParams =
+        if (blurMode == BlurMode.RADIAL) BLUR_PARAMS else listOf(BLUR_PARAMS[0])
+    return ADJUST_STRIP_ORDER.map { AdjustStripEntry.Adjustment(it) } +
+        SPLIT_TONE_PARAMS.map { AdjustStripEntry.SplitToneParam(it.label) } +
+        ColorMath.MIX_CHANNELS.indices.map { AdjustStripEntry.ColorMixChannel(it) } +
+        BlurMode.values().map { AdjustStripEntry.BlurModeEntry(it) } +
+        blurParams.map { AdjustStripEntry.BlurParam(it.label) } +
+        VIGNETTE_PARAMS.map { AdjustStripEntry.VignetteParam(it.label) } +
+        listOf(AdjustStripEntry.Optics)
+}
+
+/** Section of the strip item at [index] (clamped); ADJUSTMENTS when empty. */
+fun adjustStripSectionAt(entries: List<AdjustStripEntry>, index: Int): AdjustTab {
+    if (entries.isEmpty()) return AdjustTab.ADJUSTMENTS
+    return entries[index.coerceIn(0, entries.size - 1)].section
+}
+
+/** First strip index of [section], or 0 when the section is absent. */
+fun adjustStripStartOf(entries: List<AdjustStripEntry>, section: AdjustTab): Int =
+    entries.indexOfFirst { it.section == section }.coerceAtLeast(0)
+
+/** Tab-chip label for a section. */
+fun adjustTabLabel(tab: AdjustTab): String = when (tab) {
+    AdjustTab.ADJUSTMENTS -> "ADJUSTMENTS"
+    AdjustTab.SPLIT_TONE -> "SPLIT TONE"
+    AdjustTab.COLOR_MIX -> "COLOR MIX"
+    AdjustTab.BLUR -> "BLUR"
+    AdjustTab.VIGNETTE -> "VIGNETTE"
+    AdjustTab.OPTICS -> "OPTICS"
+}
+
+/**
+ * Resolves a remembered selection against the current strip: a
+ * BlurParam that left the strip (Width/Height/Feather/Roundness when
+ * the mode left Radial) falls back to Amount; every other section's
+ * items never leave the strip, so any other selection survives.
+ */
+fun resolveAdjustSelection(
+    entries: List<AdjustStripEntry>,
+    selected: AdjustStripEntry
+): AdjustStripEntry {
+    if (selected in entries) return selected
+    if (selected is AdjustStripEntry.BlurParam) {
+        return entries.firstOrNull {
+            it is AdjustStripEntry.BlurParam && it.label == "Amount"
+        } ?: entries.firstOrNull() ?: selected
+    }
+    return entries.firstOrNull() ?: selected
+}
+
+/** Empty circle: Blur mode None. */
+private val NoneIcon: ImageVector = paramIcon("None") {
+    strokedPath(
+        listOf(
+            PathNode.MoveTo(4f, 12f),
+            PathNode.ArcTo(8f, 8f, 0f, true, false, 20f, 12f),
+            PathNode.ArcTo(8f, 8f, 0f, true, false, 4f, 12f),
+            PathNode.Close
+        )
+    )
+}
+
+/** Filled circle: Blur mode Full. */
+private val FullIcon: ImageVector = paramIcon("Full") {
+    filledPath(
+        listOf(
+            PathNode.MoveTo(4f, 12f),
+            PathNode.ArcTo(8f, 8f, 0f, true, false, 20f, 12f),
+            PathNode.ArcTo(8f, 8f, 0f, true, false, 4f, 12f),
+            PathNode.Close
+        )
+    )
+}
+
+/** Circle with a slash: Optics has no lens profile. */
+private val NoLensIcon: ImageVector = paramIcon("NoLens") {
+    strokedPath(
+        listOf(
+            PathNode.MoveTo(4f, 12f),
+            PathNode.ArcTo(8f, 8f, 0f, true, false, 20f, 12f),
+            PathNode.ArcTo(8f, 8f, 0f, true, false, 4f, 12f),
+            PathNode.Close,
+            PathNode.MoveTo(6f, 18f), PathNode.LineTo(18f, 6f)
+        )
+    )
+}
+
+private fun blurModeIconFor(mode: BlurMode): ImageVector = when (mode) {
+    BlurMode.NONE -> NoneIcon
+    BlurMode.FULL -> FullIcon
+    BlurMode.RADIAL -> MidPointIcon
+}
+
+/**
+ * One item of the continuous Adjustments strip: every item is the same
+ * 84dp-wide column (v0.2.2 geometry) — a 64dp visual (thumbnail, icon
+ * or colour dot), a single-line label, and a value line — so sections
+ * flow as one clean row instead of six carousels glued together.
+ */
+@Composable
+private fun AdjustStripItem(
+    label: String,
+    valueText: String,
+    valueActive: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    thumb: Bitmap? = null,
+    icon: ImageVector? = null,
+    dot: Color? = null
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(84.dp).clickable { onClick() }
+    ) {
+        Box(
+            modifier = Modifier
+                .size(64.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF2A2A2A))
+                .then(
+                    if (selected) Modifier.border(2.dp, Accent, RoundedCornerShape(8.dp))
+                    else Modifier
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            when {
+                thumb != null -> Image(
+                    bitmap = thumb.asImageBitmap(),
+                    contentDescription = label,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(64.dp)
+                )
+                icon != null -> Icon(
+                    icon, null,
+                    tint = if (selected) Accent else Color(0xFFBDBDBD),
+                    modifier = Modifier.size(28.dp)
+                )
+                dot != null -> Box(
+                    Modifier.size(18.dp).clip(CircleShape).background(dot)
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            label,
+            fontSize = 10.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = if (selected) Color.White else Color(0xFFBDBDBD),
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+        )
+        Text(
+            valueText,
+            fontSize = 11.sp,
+            maxLines = 1,
+            color = if (valueActive) Accent else Color(0xFF9E9E9E)
+        )
+    }
+}
+
 @Composable
 fun AdjustmentsPanel(
     adj: Adjustments,
@@ -731,11 +945,55 @@ fun AdjustmentsPanel(
     maskThumbs: Map<AdjustMask, Bitmap>,
     modifier: Modifier = Modifier
 ) {
-    val stripSpecs = ADJUST_STRIP_ORDER.mapNotNull { name ->
-        ADJUST_SLIDER_SPECS.firstOrNull { it.name == name }
+    // v0.2.3: the Adjustments panel is ONE continuous strip, like Looks
+    // in v0.2.2 — no more six swapped panels. The strip flows through
+    // sections in tab order; the tab row tracks the strip position;
+    // tapping a tab jumps the strip to that section. The single slider
+    // below follows the selected strip item, and selection persists
+    // across section boundaries: scrolling never resets it, only
+    // tapping an item (or a mode tap focusing Amount) changes it. The
+    // per-section chip + single-slider layouts from v0.2.2 are kept —
+    // their chips now live in the strip itself.
+    val entries = remember(blur.mode) { adjustStripEntries(blur.mode) }
+    val stripState = rememberLazyListState()
+    val tabState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var activeSection by remember { mutableStateOf(adjustTab) }
+    var selectedEntry by remember {
+        mutableStateOf<AdjustStripEntry>(
+            AdjustStripEntry.Adjustment(ADJUST_STRIP_ORDER.first())
+        )
     }
-    var selectedSpec by remember { mutableStateOf(stripSpecs.firstOrNull()) }
-    if (selectedSpec == null) selectedSpec = stripSpecs.firstOrNull()
+    var mixParam by remember { mutableStateOf("Hue") }
+    val resolved = resolveAdjustSelection(entries, selectedEntry)
+    // Track: strip scroll position -> highlighted tab (and mirror it
+    // out to the editor, which uses the section for canvas behavior
+    // such as the radial-blur ellipse drag).
+    LaunchedEffect(stripState) {
+        snapshotFlow { stripState.firstVisibleItemIndex }.collect { idx ->
+            val section = adjustStripSectionAt(entries, idx)
+            if (section != activeSection) {
+                activeSection = section
+                onAdjustTab(section)
+            }
+        }
+    }
+    // The strip itself changes when the blur mode changes (Radial adds
+    // Width/Height/Feather/Roundness); re-derive the section from the
+    // position the strip kept, so the tab never points at a section
+    // the strip no longer shows at that index.
+    LaunchedEffect(entries) {
+        val section = adjustStripSectionAt(entries, stripState.firstVisibleItemIndex)
+        if (section != activeSection) {
+            activeSection = section
+            onAdjustTab(section)
+        }
+    }
+    // Keep the active tab visible in the tab row.
+    LaunchedEffect(activeSection) {
+        val tabIdx = AdjustTab.values().indexOf(activeSection).coerceAtLeast(0)
+        if (tabState.firstVisibleItemIndex != tabIdx) tabState.animateScrollToItem(tabIdx)
+    }
     Column(modifier = modifier.background(PanelBg)) {
         // Mask selector (Express Full / Subject / Background), with
         // small thumbnails: Subject dims the background, Background dims
@@ -793,95 +1051,157 @@ fun AdjustmentsPanel(
         }
         ModeChips(
             options = ADJUST_TAB_LABELS,
-            selected = when (adjustTab) {
-                AdjustTab.ADJUSTMENTS -> "ADJUSTMENTS"
-                AdjustTab.SPLIT_TONE -> "SPLIT TONE"
-                AdjustTab.COLOR_MIX -> "COLOR MIX"
-                AdjustTab.BLUR -> "BLUR"
-                AdjustTab.VIGNETTE -> "VIGNETTE"
-                AdjustTab.OPTICS -> "OPTICS"
+            selected = adjustTabLabel(activeSection),
+            onSelect = { label ->
+                val section = AdjustTab.values().firstOrNull { adjustTabLabel(it) == label }
+                    ?: AdjustTab.ADJUSTMENTS
+                activeSection = section
+                onAdjustTab(section)
+                scope.launch { stripState.animateScrollToItem(adjustStripStartOf(entries, section)) }
             },
-            onSelect = {
-                onAdjustTab(
-                    when (it) {
-                        "SPLIT TONE" -> AdjustTab.SPLIT_TONE
-                        "COLOR MIX" -> AdjustTab.COLOR_MIX
-                        "BLUR" -> AdjustTab.BLUR
-                        "VIGNETTE" -> AdjustTab.VIGNETTE
-                        "OPTICS" -> AdjustTab.OPTICS
-                        else -> AdjustTab.ADJUSTMENTS
-                    }
-                )
-            },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            state = tabState
         )
-        when (adjustTab) {
-            AdjustTab.ADJUSTMENTS -> {
-                // Per-adjustment live thumbnails: tapping one selects
-                // that adjustment for the single main slider below.
-                // v0.2.2 strip fix: Express's row is clean because
-                // every item is the SAME geometry. Ours was ragged:
-                // item width followed the label text, so long labels
-                // ("Reduce Color Noise") wrapped to two lines, making
-                // items uneven heights and uneven gaps — which also
-                // made the fling feel stiffer (variable item widths
-                // make fling distance inconsistent). Fixed 84dp-wide
-                // items, one 10dp gutter, single-line labels with
-                // ellipsis, thumbs on one baseline. The row itself
-                // was already a LazyRow with native spline fling; the
-                // ragged geometry, not the container, was the problem.
-                val stripState = rememberLazyListState()
-                LazyRow(
-                    state = stripState,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    items(stripSpecs, key = { it.name }) { spec ->
-                        val selected = spec.name == selectedSpec?.name
-                        val value = spec.get(adj)
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.width(84.dp).clickable { selectedSpec = spec }
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFF2A2A2A))
-                                    .then(
-                                        if (selected) Modifier.border(2.dp, Accent, RoundedCornerShape(8.dp))
-                                        else Modifier
-                                    )
-                            ) {
-                                adjustThumbs[spec.name]?.let { bmp ->
-                                    Image(
-                                        bitmap = bmp.asImageBitmap(),
-                                        contentDescription = spec.name,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.size(64.dp)
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                spec.name,
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = if (selected) Color.White else Color(0xFFBDBDBD),
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-                            )
-                            Text(
-                                formatSliderValue(value),
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                color = if (value != 0f) Accent else Color(0xFF9E9E9E)
-                            )
+        LazyRow(
+            state = stripState,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            items(entries, key = { it.key }) { entry ->
+                when (entry) {
+                    is AdjustStripEntry.Adjustment -> {
+                        val spec = ADJUST_SLIDER_SPECS.firstOrNull { it.name == entry.specName }
+                        val value = spec?.get(adj) ?: 0f
+                        AdjustStripItem(
+                            label = entry.specName,
+                            valueText = formatSliderValue(value),
+                            valueActive = value != 0f,
+                            selected = entry == resolved,
+                            onClick = {
+                                selectedEntry = entry
+                                activeSection = entry.section
+                            },
+                            thumb = adjustThumbs[entry.specName]
+                        )
+                    }
+                    is AdjustStripEntry.SplitToneParam -> {
+                        val param = SPLIT_TONE_PARAMS.firstOrNull { it.label == entry.label }
+                        val value = param?.get(splitTone) ?: 0f
+                        AdjustStripItem(
+                            label = entry.label,
+                            valueText = param?.format?.invoke(value) ?: "",
+                            valueActive = value != 0f,
+                            selected = entry == resolved,
+                            onClick = {
+                                selectedEntry = entry
+                                activeSection = entry.section
+                            },
+                            dot = if (entry.label.startsWith("Shadow")) Color(0xFF37474F)
+                            else Color(0xFFFFB74D)
+                        )
+                    }
+                    is AdjustStripEntry.ColorMixChannel -> {
+                        val name = ColorMath.MIX_CHANNELS[entry.channel].first
+                        val cur = when (mixParam) {
+                            "Saturation" -> colorMix.sat[entry.channel]
+                            "Luminance" -> colorMix.lum[entry.channel]
+                            else -> colorMix.hue[entry.channel]
                         }
+                        AdjustStripItem(
+                            label = name,
+                            valueText = formatSliderValue(cur),
+                            valueActive = cur != 0f,
+                            selected = entry == resolved,
+                            onClick = {
+                                selectedEntry = entry
+                                activeSection = entry.section
+                            },
+                            dot = channelDotColor(ColorMath.MIX_CHANNELS[entry.channel].second.centre)
+                        )
+                    }
+                    is AdjustStripEntry.BlurModeEntry -> {
+                        AdjustStripItem(
+                            label = when (entry.mode) {
+                                BlurMode.NONE -> "None"
+                                BlurMode.FULL -> "Full"
+                                BlurMode.RADIAL -> "Radial"
+                            },
+                            valueText = if (blur.mode == entry.mode) "Active" else "",
+                            valueActive = blur.mode == entry.mode,
+                            selected = blur.mode == entry.mode,
+                            onClick = {
+                                // Modes are actions, not slider selections:
+                                // set the mode, commit it, and focus the
+                                // slider on Blur Amount.
+                                onDraftBlur(blur.copy(mode = entry.mode))
+                                onCommit()
+                                selectedEntry = AdjustStripEntry.BlurParam("Amount")
+                                activeSection = entry.section
+                            },
+                            icon = blurModeIconFor(entry.mode)
+                        )
+                    }
+                    is AdjustStripEntry.BlurParam -> {
+                        val param = BLUR_PARAMS.firstOrNull { it.label == entry.label }
+                        val value = param?.get(blur) ?: 0f
+                        AdjustStripItem(
+                            label = entry.label,
+                            valueText = param?.format?.invoke(value) ?: "",
+                            valueActive = value != 0f,
+                            selected = entry == resolved,
+                            onClick = {
+                                selectedEntry = entry
+                                activeSection = entry.section
+                            },
+                            icon = blurIconFor(entry.label)
+                        )
+                    }
+                    is AdjustStripEntry.VignetteParam -> {
+                        val param = VIGNETTE_PARAMS.firstOrNull { it.label == entry.label }
+                        val value = param?.get(vignette) ?: 0f
+                        AdjustStripItem(
+                            label = entry.label,
+                            valueText = param?.format?.invoke(value) ?: "",
+                            valueActive = value != 0f,
+                            selected = entry == resolved,
+                            onClick = {
+                                selectedEntry = entry
+                                activeSection = entry.section
+                            },
+                            icon = vignetteIconFor(entry.label)
+                        )
+                    }
+                    is AdjustStripEntry.Optics -> {
+                        AdjustStripItem(
+                            label = "Optics",
+                            valueText = "",
+                            valueActive = false,
+                            selected = entry == resolved,
+                            onClick = {
+                                selectedEntry = entry
+                                activeSection = entry.section
+                            },
+                            icon = NoLensIcon
+                        )
                     }
                 }
-                selectedSpec?.let { spec ->
+            }
+        }
+        // Radial-blur ellipse hint, as in v0.2.2, whenever the Blur
+        // section is active with a Radial ellipse.
+        if (activeSection == AdjustTab.BLUR && blur.mode == BlurMode.RADIAL) {
+            Text(
+                "Drag the photo to move the blur ellipse; sliders set its shape.",
+                fontSize = 12.sp, color = Color(0xFF9E9E9E),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
+            )
+        }
+        // The single slider follows the selected strip item across all
+        // sections; Optics shows the unavailable notice instead.
+        when (val sel = resolved) {
+            is AdjustStripEntry.Adjustment -> {
+                ADJUST_SLIDER_SPECS.firstOrNull { it.name == sel.specName }?.let { spec ->
                     Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         ToolSlider(
                             spec.name, spec.get(adj), spec.range,
@@ -890,26 +1210,9 @@ fun AdjustmentsPanel(
                     }
                 }
             }
-            AdjustTab.SPLIT_TONE -> {
-                // Express pattern: icon chips pick the parameter, one
-                // shared slider controls it (was four stacked sliders).
-                var param by remember { mutableStateOf(SPLIT_TONE_PARAMS[0]) }
-                Column {
-                    ParamChips(
-                        options = SPLIT_TONE_PARAMS.map {
-                            ParamOption(
-                                it.label,
-                                dot = if (it.label.startsWith("Shadow")) Color(0xFF37474F)
-                                else Color(0xFFFFB74D)
-                            )
-                        },
-                        selected = param.label,
-                        onSelect = { name ->
-                            SPLIT_TONE_PARAMS.firstOrNull { it.label == name }?.let { param = it }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Box(Modifier.padding(horizontal = 16.dp)) {
+            is AdjustStripEntry.SplitToneParam -> {
+                SPLIT_TONE_PARAMS.firstOrNull { it.label == sel.label }?.let { param ->
+                    Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         ToolSlider(
                             param.label, param.get(splitTone), param.range,
                             { onDraftSplitTone(param.set(splitTone, it)) }, onCommit,
@@ -918,45 +1221,29 @@ fun AdjustmentsPanel(
                     }
                 }
             }
-            AdjustTab.COLOR_MIX -> {
-                // Express pattern: colour-dot chips pick the channel,
-                // parameter chips pick Hue/Saturation/Luminance, one
-                // shared slider controls the (channel, parameter) pair
-                // (was channel chips + three stacked sliders).
-                var channel by remember { mutableStateOf(0) }
-                var mixParam by remember { mutableStateOf("Hue") }
+            is AdjustStripEntry.ColorMixChannel -> {
                 Column {
-                    ParamChips(
-                        options = ColorMath.MIX_CHANNELS.map {
-                            ParamOption(it.first, dot = channelDotColor(it.second.centre))
-                        },
-                        selected = ColorMath.MIX_CHANNELS[channel].first,
-                        onSelect = { name ->
-                            channel = ColorMath.MIX_CHANNELS.indexOfFirst { it.first == name }.coerceAtLeast(0)
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
                     ModeChips(
                         options = listOf("Hue", "Saturation", "Luminance"),
                         selected = mixParam,
                         onSelect = { mixParam = it },
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Box(Modifier.padding(horizontal = 16.dp)) {
+                    Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         val cur = when (mixParam) {
-                            "Saturation" -> colorMix.sat[channel]
-                            "Luminance" -> colorMix.lum[channel]
-                            else -> colorMix.hue[channel]
+                            "Saturation" -> colorMix.sat[sel.channel]
+                            "Luminance" -> colorMix.lum[sel.channel]
+                            else -> colorMix.hue[sel.channel]
                         }
                         ToolSlider(
                             mixParam, cur, -100f..100f,
                             { v ->
                                 onDraftColorMix(
                                     colorMix.withChannel(
-                                        channel,
-                                        if (mixParam == "Hue") v else colorMix.hue[channel],
-                                        if (mixParam == "Saturation") v else colorMix.sat[channel],
-                                        if (mixParam == "Luminance") v else colorMix.lum[channel]
+                                        sel.channel,
+                                        if (mixParam == "Hue") v else colorMix.hue[sel.channel],
+                                        if (mixParam == "Saturation") v else colorMix.sat[sel.channel],
+                                        if (mixParam == "Luminance") v else colorMix.lum[sel.channel]
                                     )
                                 )
                             }, onCommit
@@ -964,80 +1251,20 @@ fun AdjustmentsPanel(
                     }
                 }
             }
-            AdjustTab.BLUR -> {
-                // Mode chips (None/Full/Radial) stay; the parameters
-                // become icon chips + one shared slider (was stacked
-                // sliders). Width/Height only apply to the Radial ellipse.
-                var param by remember { mutableStateOf(BLUR_PARAMS[0]) }
-                val visibleParams =
-                    if (blur.mode == BlurMode.RADIAL) BLUR_PARAMS else listOf(BLUR_PARAMS[0])
-                val shownParam =
-                    visibleParams.firstOrNull { it.label == param.label } ?: BLUR_PARAMS[0]
-                Column {
-                    ModeChips(
-                        options = listOf("None", "Full", "Radial"),
-                        selected = when (blur.mode) {
-                            BlurMode.FULL -> "Full"
-                            BlurMode.RADIAL -> "Radial"
-                            BlurMode.NONE -> "None"
-                        },
-                        onSelect = {
-                            onDraftBlur(
-                                blur.copy(
-                                    mode = when (it) {
-                                        "Full" -> BlurMode.FULL
-                                        "Radial" -> BlurMode.RADIAL
-                                        else -> BlurMode.NONE
-                                    }
-                                )
-                            )
-                            onCommit()
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    if (blur.mode == BlurMode.RADIAL) {
-                        Text(
-                            "Drag the photo to move the blur ellipse; sliders set its shape.",
-                            fontSize = 12.sp, color = Color(0xFF9E9E9E),
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
-                        )
-                    }
-                    ParamChips(
-                        options = visibleParams.map {
-                            ParamOption(it.label, icon = blurIconFor(it.label))
-                        },
-                        selected = shownParam.label,
-                        onSelect = { name ->
-                            BLUR_PARAMS.firstOrNull { it.label == name }?.let { param = it }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Box(Modifier.padding(horizontal = 16.dp)) {
+            is AdjustStripEntry.BlurParam -> {
+                BLUR_PARAMS.firstOrNull { it.label == sel.label }?.let { param ->
+                    Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         ToolSlider(
-                            shownParam.label, shownParam.get(blur), shownParam.range,
-                            { onDraftBlur(shownParam.set(blur, it)) }, onCommit,
-                            format = shownParam.format
+                            param.label, param.get(blur), param.range,
+                            { onDraftBlur(param.set(blur, it)) }, onCommit,
+                            format = param.format
                         )
                     }
                 }
             }
-            AdjustTab.VIGNETTE -> {
-                // Express pattern: four icon chips (Amount, Mid Point,
-                // Feather, Roundness) above ONE shared slider (was four
-                // stacked labeled sliders). Amount keeps +100..-100.
-                var param by remember { mutableStateOf(VIGNETTE_PARAMS[0]) }
-                Column {
-                    ParamChips(
-                        options = VIGNETTE_PARAMS.map {
-                            ParamOption(it.label, icon = vignetteIconFor(it.label))
-                        },
-                        selected = param.label,
-                        onSelect = { name ->
-                            VIGNETTE_PARAMS.firstOrNull { it.label == name }?.let { param = it }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Box(Modifier.padding(horizontal = 16.dp)) {
+            is AdjustStripEntry.VignetteParam -> {
+                VIGNETTE_PARAMS.firstOrNull { it.label == sel.label }?.let { param ->
+                    Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
                         ToolSlider(
                             param.label, param.get(vignette), param.range,
                             { onDraftVignette(param.set(vignette, it)) }, onCommit,
@@ -1046,7 +1273,7 @@ fun AdjustmentsPanel(
                     }
                 }
             }
-            AdjustTab.OPTICS -> {
+            is AdjustStripEntry.Optics -> {
                 // Express itself shows this for photos without a lens
                 // profile; we do not invent lens-profile correction.
                 Column(
@@ -1061,9 +1288,24 @@ fun AdjustmentsPanel(
                     )
                 }
             }
+            is AdjustStripEntry.BlurModeEntry -> {
+                // Modes are actions, never the slider selection; reaching
+                // here means a stale selection survived a strip change,
+                // so fall back to the Blur Amount slider.
+                BLUR_PARAMS.firstOrNull { it.label == "Amount" }?.let { param ->
+                    Box(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                        ToolSlider(
+                            param.label, param.get(blur), param.range,
+                            { onDraftBlur(param.set(blur, it)) }, onCommit,
+                            format = param.format
+                        )
+                    }
+                }
+            }
         }
     }
 }
+
 
 // ----------------------------------------------------------------------
 // Crop (tabs: Aspect Ratio / Rotate / Transform)
