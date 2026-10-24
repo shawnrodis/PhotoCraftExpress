@@ -28,6 +28,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -89,6 +91,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.shawnrodis.photocraftexpress.engine.AdjustMask
 import com.shawnrodis.photocraftexpress.engine.Adjustments
 import com.shawnrodis.photocraftexpress.engine.AutoEnhance
 import com.shawnrodis.photocraftexpress.engine.BackgroundFx
@@ -118,6 +121,10 @@ import com.shawnrodis.photocraftexpress.engine.StickerKind
 import com.shawnrodis.photocraftexpress.engine.TextFont
 import com.shawnrodis.photocraftexpress.engine.TextItem
 import com.shawnrodis.photocraftexpress.engine.Vignette
+import com.shawnrodis.photocraftexpress.engine.ZoomState
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import com.shawnrodis.photocraftexpress.engine.WarpMath
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -249,6 +256,66 @@ fun EditorScreen(
         }
     }
 
+    // Per-adjustment live thumbnails for the Adjustments strip: each
+    // adjustment alone at a demo value, rendered from a small downscale
+    // of the current photo (same pattern as lookThumbs).
+    var adjustThumbs by remember { mutableStateOf<Map<String, Bitmap>>(emptyMap()) }
+    LaunchedEffect(sourceBitmap) {
+        adjustThumbs = withContext(Dispatchers.Default) {
+            val small = BitmapBridge.downscale(BitmapBridge.toPixelImage(sourceBitmap), 160)
+            adjustThumbStates().associate { (name, demoAdj) ->
+                name to BitmapBridge.toBitmap(
+                    PixelPipeline.render(small, EditState(adj = demoAdj))
+                )
+            }
+        }
+    }
+
+    // Mask-selector thumbnails: Full is the plain photo; Subject dims
+    // the background around the person, Background dims the person.
+    // Without a detected person all three fall back to the plain photo
+    // and the panel shows its "No person found" notice instead.
+    var maskThumbs by remember { mutableStateOf<Map<AdjustMask, Bitmap>>(emptyMap()) }
+    LaunchedEffect(sourceBitmap, analysis) {
+        maskThumbs = withContext(Dispatchers.Default) {
+            val smallPx = BitmapBridge.downscale(BitmapBridge.toPixelImage(sourceBitmap), 120)
+            val fullBmp = BitmapBridge.toBitmap(smallPx)
+            val mask = analysis?.personMask
+            if (mask == null || analysis?.personFound != true) {
+                mapOf(
+                    AdjustMask.FULL to fullBmp,
+                    AdjustMask.SUBJECT to fullBmp,
+                    AdjustMask.BACKGROUND to fullBmp
+                )
+            } else {
+                fun masked(darkenPerson: Boolean): Bitmap {
+                    val out = IntArray(smallPx.pixels.size)
+                    for (i in smallPx.pixels.indices) {
+                        val x = (i % smallPx.width).toFloat() / smallPx.width
+                        val y = (i / smallPx.width).toFloat() / smallPx.height
+                        val mx = (x * mask.width).toInt().coerceIn(0, mask.width - 1)
+                        val my = (y * mask.height).toInt().coerceIn(0, mask.height - 1)
+                        // R channel = confidence 0..255 (FaceAnalysis).
+                        val conf = ((mask.pixels[my * mask.width + mx] shr 16) and 0xFF) / 255f
+                        val darken = if (darkenPerson) conf else 1f - conf
+                        val p = smallPx.pixels[i]
+                        val f = 1f - 0.5f * darken
+                        out[i] = (p and -0x1000000) or
+                            ((((p shr 16) and 0xFF) * f + 0.5f).toInt().coerceIn(0, 255) shl 16) or
+                            ((((p shr 8) and 0xFF) * f + 0.5f).toInt().coerceIn(0, 255) shl 8) or
+                            ((p and 0xFF) * f + 0.5f).toInt().coerceIn(0, 255)
+                    }
+                    return BitmapBridge.toBitmap(PixelImage(out, smallPx.width, smallPx.height))
+                }
+                mapOf(
+                    AdjustMask.FULL to fullBmp,
+                    AdjustMask.SUBJECT to masked(darkenPerson = false),
+                    AdjustMask.BACKGROUND to masked(darkenPerson = true)
+                )
+            }
+        }
+    }
+
     // While the Crop tool is active the preview shows the uncropped photo
     // (the crop overlay draws the rect) — except on the Transform tab,
     // where the cropped + warped photo is the thing being edited.
@@ -257,23 +324,36 @@ fun EditorScreen(
     var preview by remember { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(cur, sourceBitmap, analysis, insertedBitmaps, applyCrop, tool) {
         val out = withContext(Dispatchers.Default) {
-            val px = BitmapBridge.toPixelImage(sourceBitmap)
+            // Interactive preview renders from a 1024px-long-edge
+            // downscale through the SAME PixelPipeline.render (and the
+            // same vignette math) as export, so slider drags stay smooth
+            // while the preview and the saved result agree exactly.
+            // Export still renders at full resolution via Exporter.
+            val px = BitmapBridge.downscale(BitmapBridge.toPixelImage(sourceBitmap), 1024)
             val faceData: FaceRenderData? = analysis?.faces?.firstOrNull()?.let {
                 FaceAnalysis.mapFace(
                     it, cur, applyCrop,
                     sourceBitmap.width.toFloat() / sourceBitmap.height
                 )
             }
+            // A newer slider value supersedes this render: abort at
+            // the next stage boundary instead of finishing stale work.
+            val ctx = currentCoroutineContext()
             val rendered = PixelPipeline.render(
                 px, cur, applyCrop,
-                RenderAssets(faceData, analysis?.personMask)
+                RenderAssets(faceData, analysis?.personMask),
+                isActive = { ctx.isActive }
             )
+            // A superseded render must never assign a stale bitmap:
+            // abort before the layer composite and before returning.
+            ctx.ensureActive()
             var bmp = BitmapBridge.toBitmap(rendered)
             // Layers live in the cropped frame; while cropping (uncropped
             // preview) they would draw in the wrong place, so hide them.
             if (tool != EditorTool.Crop) {
                 bmp = LayerComposite.composite(bmp, cur, insertedBitmaps)
             }
+            ctx.ensureActive()
             bmp
         }
         preview = out
@@ -301,12 +381,13 @@ fun EditorScreen(
             stickerItems = emptyList(), insertedImages = emptyList(),
             overlay = OverlayFx(), border = BorderFx(), background = BackgroundFx(),
             makeupLip = 0f, makeupBlush = 0f, makeupShadow = 0f, makeupLiner = 0f,
-            eyesEnhance = 0f
+            eyesEnhance = 0f, adjustMask = AdjustMask.FULL
         )
         beforeBitmap = withContext(Dispatchers.Default) {
             BitmapBridge.toBitmap(
                 PixelPipeline.render(
-                    BitmapBridge.toPixelImage(sourceBitmap), geometryState, true
+                    BitmapBridge.downscale(BitmapBridge.toPixelImage(sourceBitmap), 1024),
+                    geometryState, true
                 )
             )
         }
@@ -382,6 +463,9 @@ fun EditorScreen(
     var dragOps by remember { mutableStateOf<List<WarpMath.BrushOp>>(emptyList()) }
     var dragLast by remember { mutableStateOf(0f to 0f) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    // Canvas zoom: a view transform only, never part of the edit state.
+    var zoom by remember { mutableStateOf(ZoomState.IDENTITY) }
+    LaunchedEffect(source, sourceUri) { zoom = ZoomState.IDENTITY }
 
     fun hitTest(x: Float, y: Float): Triple<String, Long, Float>? {
         var best: Triple<String, Long, Float>? = null
@@ -601,6 +685,16 @@ fun EditorScreen(
 
     val gestureModifier = canvasGestureModifier(
         active = tool != EditorTool.Crop && !splitCompare,
+        zoom = zoom,
+        onZoomChange = { zoom = it },
+        onDoubleTap = { x, y -> zoom = zoom.toggleAt(x, y) },
+        onDragCancel = {
+            // A second finger landing mid-drag restores the drag's
+            // start state without committing, so the pinch starts clean.
+            dragBase?.let { draftTo(it) }
+            dragBase = null
+            dragOps = emptyList()
+        },
         onTap = { x, y -> onCanvasTap(x, y) },
         onDragStart = { x, y -> onCanvasDragStart(x, y) },
         onDrag = { x, y -> onCanvasDrag(x, y) },
@@ -720,6 +814,21 @@ fun EditorScreen(
                     .onSizeChanged { canvasSize = it }
                     .then(gestureModifier)
             ) {
+                // Zoom is a view transform only: the image, split view,
+                // blur ellipse and crop overlays all live inside this
+                // layer, so they stay aligned while zoomed; tool input
+                // coordinates are inverse-mapped in the gesture gate.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer(
+                            scaleX = zoom.scale,
+                            scaleY = zoom.scale,
+                            translationX = zoom.offsetX * canvasSize.width,
+                            translationY = zoom.offsetY * canvasSize.height,
+                            transformOrigin = TransformOrigin(0.5f, 0.5f)
+                        )
+                ) {
                 if (showOriginal) {
                     Image(
                         bitmap = sourceBitmap.asImageBitmap(),
@@ -784,6 +893,22 @@ fun EditorScreen(
                                 onCommit = { newCrop -> commitDirect(cur.copy(crop = newCrop)) }
                             )
                         }
+                    }
+                }
+                } // end zoom layer
+                if (zoom.isZoomed) {
+                    // Reset affordance, unzoomed chrome above the canvas.
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(10.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0xAA000000))
+                            .clickable { zoom = ZoomState.IDENTITY }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Reset zoom", fontSize = 12.sp, color = Color.White)
                     }
                 }
             }
@@ -855,7 +980,12 @@ fun EditorScreen(
                     onDraftColorMix = { draftTo(cur.copy(colorMix = it)) },
                     onDraftBlur = { draftTo(cur.copy(blur = it)) },
                     onDraftVignette = { draftTo(cur.copy(vignette = it)) },
-                    onCommit = { commitDraft() }
+                    onCommit = { commitDraft() },
+                    mask = cur.adjustMask,
+                    onMask = { commitDirect(cur.copy(adjustMask = it)) },
+                    personFound = personFound,
+                    adjustThumbs = adjustThumbs,
+                    maskThumbs = maskThumbs
                 )
                 EditorTool.Heal -> Box(Modifier.verticalScroll(rememberScrollState())) {
                     HealPanel(brushSize = healBrush, onBrushSize = { healBrush = it })
@@ -1281,24 +1411,97 @@ fun EditorScreen(
 @Composable
 private fun canvasGestureModifier(
     active: Boolean,
+    zoom: ZoomState,
+    onZoomChange: (ZoomState) -> Unit,
+    onDoubleTap: (Float, Float) -> Unit,
+    onDragCancel: () -> Unit,
     onTap: (Float, Float) -> Unit,
     onDragStart: (Float, Float) -> Unit,
     onDrag: (Float, Float) -> Unit,
     onDragEnd: () -> Unit
 ): Modifier {
     if (!active) return Modifier
+    val zoomRef = rememberUpdatedState(zoom)
+    val zoomChangeRef = rememberUpdatedState(onZoomChange)
+    val doubleTapRef = rememberUpdatedState(onDoubleTap)
+    val dragCancelRef = rememberUpdatedState(onDragCancel)
     val tapRef = rememberUpdatedState(onTap)
     val dragStartRef = rememberUpdatedState(onDragStart)
     val dragRef = rememberUpdatedState(onDrag)
     val dragEndRef = rememberUpdatedState(onDragEnd)
     return Modifier.pointerInput(Unit) {
+        // Double-tap detection lives across gestures (same
+        // pointer-input scope), so it survives each awaitEachGesture.
+        var lastTapTime = 0L
+        var lastTapPos = Offset.Zero
         awaitEachGesture {
             val down = awaitFirstDown()
             var last = down.position
             var dragging = false
+            var transforming = false
+            var zoomAtStart = zoomRef.value
+            var centroidAtStart = Offset.Zero
+            var spanAtStart = 0f
             var done = false
+            // Tool coordinates are in the unzoomed canvas frame: map
+            // every pointer position back through the current zoom.
+            fun norm(pos: Offset): Pair<Float, Float> {
+                val z = zoomRef.value
+                val p = z.inverse(pos.x / size.width, pos.y / size.height)
+                return p.first to p.second
+            }
             while (!done) {
                 val ev = awaitPointerEvent()
+                val pressed = ev.changes.filter { it.pressed }
+                if (pressed.size >= 2 && !transforming) {
+                    // Second finger down: cancel any in-progress tool
+                    // drag (its partial state is restored, uncommitted)
+                    // and switch to pinch/pan for the rest of the gesture.
+                    if (dragging) {
+                        dragCancelRef.value()
+                        dragging = false
+                    }
+                    transforming = true
+                    zoomAtStart = zoomRef.value
+                    centroidAtStart = pressed.fold(Offset.Zero) { acc, c -> acc + c.position } /
+                        pressed.size.toFloat()
+                    var max = 0f
+                    for (a in pressed) for (b in pressed) {
+                        max = maxOf(max, (a.position - b.position).getDistance())
+                    }
+                    spanAtStart = max
+                    ev.changes.forEach { it.consume() }
+                    continue
+                }
+                if (transforming) {
+                    if (pressed.size < 2) {
+                        // Last finger lifted: end the transform; no
+                        // tool event fires for the leftover pointer.
+                        done = true
+                        ev.changes.forEach { it.consume() }
+                        continue
+                    }
+                    val centroid = pressed.fold(Offset.Zero) { acc, c -> acc + c.position } /
+                        pressed.size.toFloat()
+                    var span = 0f
+                    for (a in pressed) for (b in pressed) {
+                        span = maxOf(span, (a.position - b.position).getDistance())
+                    }
+                    var next = zoomAtStart
+                    if (spanAtStart > 0f && span > 0f) {
+                        next = next.zoomAt(
+                            centroidAtStart.x / size.width,
+                            centroidAtStart.y / size.height,
+                            span / spanAtStart
+                        )
+                    }
+                    val dx = (centroid.x - centroidAtStart.x) / size.width
+                    val dy = (centroid.y - centroidAtStart.y) / size.height
+                    next = next.pan(dx, dy)
+                    zoomChangeRef.value(next)
+                    ev.changes.forEach { it.consume() }
+                    continue
+                }
                 val ch = ev.changes.firstOrNull { it.id == down.id }
                 if (ch == null) {
                     done = true
@@ -1310,26 +1513,31 @@ private fun canvasGestureModifier(
                     if (dragging) {
                         dragEndRef.value()
                     } else {
-                        tapRef.value(
-                            last.x / size.width, last.y / size.height
-                        )
+                        val now = System.currentTimeMillis()
+                        val (nx, ny) = norm(last)
+                        if (now - lastTapTime < 300L &&
+                            (last - lastTapPos).getDistance() < 100f
+                        ) {
+                            doubleTapRef.value(nx, ny)
+                            lastTapTime = 0L
+                        } else {
+                            tapRef.value(nx, ny)
+                            lastTapTime = now
+                            lastTapPos = last
+                        }
                     }
                     ch.consume()
                     done = true
-                } else if (ch.pressed) {
+                } else {
                     val dist = (ch.position - down.position).getDistance()
                     if (!dragging && dist > 8f) {
                         dragging = true
-                        dragStartRef.value(
-                            down.position.x / size.width,
-                            down.position.y / size.height
-                        )
+                        val (sx, sy) = norm(down.position)
+                        dragStartRef.value(sx, sy)
                     }
                     if (dragging) {
-                        dragRef.value(
-                            ch.position.x / size.width,
-                            ch.position.y / size.height
-                        )
+                        val (nx, ny) = norm(ch.position)
+                        dragRef.value(nx, ny)
                         last = ch.position
                     }
                     ch.consume()
