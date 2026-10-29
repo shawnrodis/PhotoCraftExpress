@@ -184,7 +184,11 @@ fun ModeChips(
     selected: String,
     onSelect: (String) -> Unit,
     modifier: Modifier = Modifier,
-    state: LazyListState? = null
+    state: LazyListState? = null,
+    // v0.2.4: Express's tab rows render ALL CAPS (AppTabTextAppearance
+    // textAllCaps). Keys/selection still use the original strings;
+    // only the rendered label is uppercased.
+    uppercase: Boolean = false
 ) {
     val listState = state ?: rememberLazyListState()
     LazyRow(
@@ -197,7 +201,7 @@ fun ModeChips(
             FilterChip(
                 selected = option == selected,
                 onClick = { onSelect(option) },
-                label = { Text(option, fontSize = 13.sp) },
+                label = { Text(if (uppercase) option.uppercase() else option, fontSize = 13.sp) },
                 colors = FilterChipDefaults.filterChipColors(
                     containerColor = Color(0xFF2A2A2A),
                     labelColor = Color(0xFFE0E0E0),
@@ -555,6 +559,7 @@ fun LooksPanel(
         ModeChips(
             options = Looks.CATEGORIES.map { it.first },
             selected = activeCategory,
+            uppercase = true,
             onSelect = { name ->
                 activeCategory = name
                 scope.launch { stripState.animateScrollToItem(looksStripStartOf(entries, name)) }
@@ -572,11 +577,11 @@ fun LooksPanel(
                 val selected = entry.id == selectedLookId
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.width(76.dp)
+                    modifier = Modifier.width(75.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(64.dp)
+                            .size(75.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color(0xFF2A2A2A))
                             .then(
@@ -593,14 +598,14 @@ fun LooksPanel(
                                 bitmap = bmp.asImageBitmap(),
                                 contentDescription = entry.name,
                                 contentScale = ContentScale.Crop,
-                                modifier = Modifier.size(64.dp)
+                                modifier = Modifier.size(75.dp)
                             )
                         }
                     }
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         entry.name,
-                        fontSize = 11.sp,
+                        fontSize = 13.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         color = if (selected) Color.White else Color(0xFFBDBDBD),
@@ -858,15 +863,16 @@ private fun blurModeIconFor(mode: BlurMode): ImageVector = when (mode) {
 
 /**
  * One item of the continuous Adjustments strip: every item is the same
- * 84dp-wide column (v0.2.2 geometry) — a 64dp visual (thumbnail, icon
- * or colour dot), a single-line label, and a value line — so sections
- * flow as one clean row instead of six carousels glued together.
+ * 75dp-wide column (v0.2.4 geometry, matching Express's thumbnail_size)
+ * — a 75dp visual (thumbnail, icon or colour dot) and a single-line
+ * label — so sections flow as one clean row instead of six carousels
+ * glued together. Express shows NO value line under strip items; the
+ * value lives in the slider row above the strip (ToolSlider), so the
+ * old value line is gone in v0.2.4 — it duplicated the slider readout.
  */
 @Composable
 private fun AdjustStripItem(
     label: String,
-    valueText: String,
-    valueActive: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
     thumb: Bitmap? = null,
@@ -875,11 +881,11 @@ private fun AdjustStripItem(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(84.dp).clickable { onClick() }
+        modifier = Modifier.width(75.dp).clickable { onClick() }
     ) {
         Box(
             modifier = Modifier
-                .size(64.dp)
+                .size(75.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(Color(0xFF2A2A2A))
                 .then(
@@ -893,7 +899,7 @@ private fun AdjustStripItem(
                     bitmap = thumb.asImageBitmap(),
                     contentDescription = label,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(64.dp)
+                    modifier = Modifier.size(75.dp)
                 )
                 icon != null -> Icon(
                     icon, null,
@@ -905,20 +911,14 @@ private fun AdjustStripItem(
                 )
             }
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             label,
-            fontSize = 10.sp,
+            fontSize = 13.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             color = if (selected) Color.White else Color(0xFFBDBDBD),
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-        )
-        Text(
-            valueText,
-            fontSize = 11.sp,
-            maxLines = 1,
-            color = if (valueActive) Accent else Color(0xFF9E9E9E)
         )
     }
 }
@@ -1052,6 +1052,7 @@ fun AdjustmentsPanel(
         ModeChips(
             options = ADJUST_TAB_LABELS,
             selected = adjustTabLabel(activeSection),
+            uppercase = true,
             onSelect = { label ->
                 val section = AdjustTab.values().firstOrNull { adjustTabLabel(it) == label }
                     ?: AdjustTab.ADJUSTMENTS
@@ -1071,12 +1072,8 @@ fun AdjustmentsPanel(
             items(entries, key = { it.key }) { entry ->
                 when (entry) {
                     is AdjustStripEntry.Adjustment -> {
-                        val spec = ADJUST_SLIDER_SPECS.firstOrNull { it.name == entry.specName }
-                        val value = spec?.get(adj) ?: 0f
                         AdjustStripItem(
                             label = entry.specName,
-                            valueText = formatSliderValue(value),
-                            valueActive = value != 0f,
                             selected = entry == resolved,
                             onClick = {
                                 selectedEntry = entry
@@ -1086,12 +1083,8 @@ fun AdjustmentsPanel(
                         )
                     }
                     is AdjustStripEntry.SplitToneParam -> {
-                        val param = SPLIT_TONE_PARAMS.firstOrNull { it.label == entry.label }
-                        val value = param?.get(splitTone) ?: 0f
                         AdjustStripItem(
                             label = entry.label,
-                            valueText = param?.format?.invoke(value) ?: "",
-                            valueActive = value != 0f,
                             selected = entry == resolved,
                             onClick = {
                                 selectedEntry = entry
@@ -1103,15 +1096,8 @@ fun AdjustmentsPanel(
                     }
                     is AdjustStripEntry.ColorMixChannel -> {
                         val name = ColorMath.MIX_CHANNELS[entry.channel].first
-                        val cur = when (mixParam) {
-                            "Saturation" -> colorMix.sat[entry.channel]
-                            "Luminance" -> colorMix.lum[entry.channel]
-                            else -> colorMix.hue[entry.channel]
-                        }
                         AdjustStripItem(
                             label = name,
-                            valueText = formatSliderValue(cur),
-                            valueActive = cur != 0f,
                             selected = entry == resolved,
                             onClick = {
                                 selectedEntry = entry
@@ -1127,8 +1113,6 @@ fun AdjustmentsPanel(
                                 BlurMode.FULL -> "Full"
                                 BlurMode.RADIAL -> "Radial"
                             },
-                            valueText = if (blur.mode == entry.mode) "Active" else "",
-                            valueActive = blur.mode == entry.mode,
                             selected = blur.mode == entry.mode,
                             onClick = {
                                 // Modes are actions, not slider selections:
@@ -1143,12 +1127,8 @@ fun AdjustmentsPanel(
                         )
                     }
                     is AdjustStripEntry.BlurParam -> {
-                        val param = BLUR_PARAMS.firstOrNull { it.label == entry.label }
-                        val value = param?.get(blur) ?: 0f
                         AdjustStripItem(
                             label = entry.label,
-                            valueText = param?.format?.invoke(value) ?: "",
-                            valueActive = value != 0f,
                             selected = entry == resolved,
                             onClick = {
                                 selectedEntry = entry
@@ -1158,12 +1138,8 @@ fun AdjustmentsPanel(
                         )
                     }
                     is AdjustStripEntry.VignetteParam -> {
-                        val param = VIGNETTE_PARAMS.firstOrNull { it.label == entry.label }
-                        val value = param?.get(vignette) ?: 0f
                         AdjustStripItem(
                             label = entry.label,
-                            valueText = param?.format?.invoke(value) ?: "",
-                            valueActive = value != 0f,
                             selected = entry == resolved,
                             onClick = {
                                 selectedEntry = entry
@@ -1175,8 +1151,6 @@ fun AdjustmentsPanel(
                     is AdjustStripEntry.Optics -> {
                         AdjustStripItem(
                             label = "Optics",
-                            valueText = "",
-                            valueActive = false,
                             selected = entry == resolved,
                             onClick = {
                                 selectedEntry = entry
@@ -1327,6 +1301,7 @@ fun CropPanel(
     Column(modifier = modifier.background(PanelBg)) {
         ModeChips(
             options = listOf("Aspect Ratio", "Rotate", "Transform"),
+            uppercase = true,
             selected = when (cropTab) {
                 CropTab.ASPECT -> "Aspect Ratio"
                 CropTab.ROTATE -> "Rotate"

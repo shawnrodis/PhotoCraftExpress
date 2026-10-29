@@ -233,7 +233,7 @@ fun HomeScreen(
     if (showCredits) {
         AlertDialog(
             onDismissRequest = { showCredits = false },
-            title = { Text("PhotoCraft Express 0.2.0") },
+            title = { Text("PhotoCraft Express 0.2.4") },
             text = {
                 Text(
                     "A photo editor with an original codebase and hand-drawn icons. " +

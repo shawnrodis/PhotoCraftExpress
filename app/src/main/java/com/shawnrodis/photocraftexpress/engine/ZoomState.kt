@@ -53,6 +53,20 @@ data class ZoomState(
         offsetY = (offsetY + dy).coerceIn(-MAX_OFFSET, MAX_OFFSET)
     )
 
+    /**
+     * Maps a finger drag measured in displayed (zoomed) pixels back to
+     * unzoomed canvas pixels (v0.2.4, Transform handles). The graphics
+     * layer scales rendering but NOT pointer coordinates, so a drag of
+     * D displayed px moves the canvas point by D / scale — at 2x zoom
+     * the old raw-delta code moved corners twice as far as the finger,
+     * and the handle drifted away from the fingertip mid-drag.
+     * Translation cancels for deltas, so only the scale matters.
+     */
+    fun canvasDragDelta(dx: Float, dy: Float): Pair<Float, Float> {
+        val s = scale.coerceAtLeast(1f)
+        return (dx / s) to (dy / s)
+    }
+
     /** Double-tap behavior: 1x -> 2.5x anchored at the tap, else back to 1x. */
     fun toggleAt(cx: Float, cy: Float): ZoomState =
         if (isZoomed) IDENTITY else zoomAt(cx, cy, 2.5f)

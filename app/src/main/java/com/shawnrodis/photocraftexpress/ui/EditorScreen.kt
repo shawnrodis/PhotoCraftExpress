@@ -1031,6 +1031,7 @@ fun EditorScreen(
                     TransformHandles(
                         quad = cur.transform ?: WarpMath.Quad.IDENTITY,
                         canvasSize = canvasSize,
+                        zoom = zoom,
                         onDraft = { q -> draftTo(cur.copy(transform = q)) },
                         onCommit = { commitDraft() }
                     )
@@ -1774,9 +1775,13 @@ private fun canvasGestureModifier(
 private fun TransformHandles(
     quad: WarpMath.Quad,
     canvasSize: IntSize,
+    zoom: ZoomState,
     onDraft: (WarpMath.Quad) -> Unit,
     onCommit: () -> Unit
 ) {
+    // v0.2.4: the zoom at drag time, read live so a pinch mid-drag
+    // still maps deltas correctly.
+    val zoomRef = rememberUpdatedState(zoom)
     var corners by remember(quad, canvasSize) {
         mutableStateOf(
             List(4) { i ->
@@ -1814,11 +1819,17 @@ private fun TransformHandles(
                         onDragEnd = { onCommit() }
                     ) { change, dragAmount ->
                         change.consume()
+                        // v0.2.4: the graphics layer scales rendering
+                        // but NOT pointer coordinates, so divide the
+                        // displayed-px delta by the zoom scale to get
+                        // canvas px — raw deltas moved corners 2x too
+                        // far at 2x zoom and drifted off the fingertip.
+                        val (ddx, ddy) = zoomRef.value.canvasDragDelta(dragAmount.x, dragAmount.y)
                         val updated = corners.toMutableList()
                         val cur = updated[i]
                         updated[i] = Offset(
-                            (cur.x + dragAmount.x).coerceIn(0f, canvasSize.width.toFloat()),
-                            (cur.y + dragAmount.y).coerceIn(0f, canvasSize.height.toFloat())
+                            (cur.x + ddx).coerceIn(0f, canvasSize.width.toFloat()),
+                            (cur.y + ddy).coerceIn(0f, canvasSize.height.toFloat())
                         )
                         corners = updated
                         onDraft(
@@ -1945,7 +1956,7 @@ private fun AboutDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("PhotoCraft Express 0.2.0") },
+        title = { Text("PhotoCraft Express 0.2.4") },
         text = {
             Text(
                 "A photo editor with an original codebase and hand-drawn icons. " +
