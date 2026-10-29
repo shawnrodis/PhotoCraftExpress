@@ -354,6 +354,13 @@ fun EditorScreen(
     val previewBase = remember(sourceBitmap) {
         BitmapBridge.downscale(BitmapBridge.toPixelImage(sourceBitmap), 1024)
     }
+    // Drag-time 512px base (v0.2.5 lag fix): derived from the cached
+    // 1024px base, so no extra load or decode cost. The worker renders
+    // this while a drag is in flight and the full base on release — the
+    // standard low-res-while-dragging pattern.
+    val previewBaseDrag = remember(previewBase) {
+        BitmapBridge.downscale(previewBase, 512)
+    }
     // Live-slider render worker (v0.2.2 fix). Slider drags must update
     // the canvas DURING the drag, not only on release. The v0.2.1
     // approach — LaunchedEffect(cur) with cooperative cancellation —
@@ -373,37 +380,50 @@ fun EditorScreen(
             onBufferOverflow = BufferOverflow.DROP_OLDEST
         )
     }
-    LaunchedEffect(cur, sourceBitmap, analysis, insertedBitmaps, applyCrop, tool) {
+    // v0.2.5: `draft` is an explicit key (not just `cur`) because
+    // committing leaves `cur` equal to the last draft value — without
+    // it, release would never emit and the preview would stay on the
+    // 512px drag base. The base is pinned per request at offer time.
+    LaunchedEffect(cur, draft, sourceBitmap, analysis, insertedBitmaps, applyCrop, tool) {
         previewRequests.tryEmit(
-            PreviewRequest(cur, analysis, insertedBitmaps, applyCrop, tool)
+            PreviewRequest(
+                cur, analysis, insertedBitmaps, applyCrop, tool,
+                selectPreviewBase(draft != null, previewBase, previewBaseDrag)
+            )
         )
     }
     LaunchedEffect(sourceBitmap) {
         renderLatest(previewRequests, { req ->
-            val faceData: FaceRenderData? = req.analysis?.faces?.firstOrNull()?.let {
-                FaceAnalysis.mapFace(
-                    it, req.state, req.applyCrop,
-                    sourceBitmap.width.toFloat() / sourceBitmap.height
+            // v0.2.5 lag fix: this lambda used to run inline on the UI
+            // thread (this effect's Main dispatcher), so every drag tick
+            // blocked the slider's own frames with a megapixel render.
+            // Only the `preview = it` state write below stays on Main.
+            withContext(Dispatchers.Default) {
+                val faceData: FaceRenderData? = req.analysis?.faces?.firstOrNull()?.let {
+                    FaceAnalysis.mapFace(
+                        it, req.state, req.applyCrop,
+                        sourceBitmap.width.toFloat() / sourceBitmap.height
+                    )
+                }
+                // Stage-boundary aborts still guard WORKER cancellation (a
+                // new photo replacing the source); they no longer fire on
+                // new drag ticks, which is the whole point of the worker.
+                val ctx = currentCoroutineContext()
+                val rendered = PixelPipeline.render(
+                    req.base, req.state, req.applyCrop,
+                    RenderAssets(faceData, req.analysis?.personMask),
+                    isActive = { ctx.isActive }
                 )
+                ctx.ensureActive()
+                var bmp = BitmapBridge.toBitmap(rendered)
+                // Layers live in the cropped frame; while cropping (uncropped
+                // preview) they would draw in the wrong place, so hide them.
+                if (req.tool != EditorTool.Crop) {
+                    bmp = LayerComposite.composite(bmp, req.state, req.insertedBitmaps)
+                }
+                ctx.ensureActive()
+                bmp
             }
-            // Stage-boundary aborts still guard WORKER cancellation (a
-            // new photo replacing the source); they no longer fire on
-            // new drag ticks, which is the whole point of the worker.
-            val ctx = currentCoroutineContext()
-            val rendered = PixelPipeline.render(
-                previewBase, req.state, req.applyCrop,
-                RenderAssets(faceData, req.analysis?.personMask),
-                isActive = { ctx.isActive }
-            )
-            ctx.ensureActive()
-            var bmp = BitmapBridge.toBitmap(rendered)
-            // Layers live in the cropped frame; while cropping (uncropped
-            // preview) they would draw in the wrong place, so hide them.
-            if (req.tool != EditorTool.Crop) {
-                bmp = LayerComposite.composite(bmp, req.state, req.insertedBitmaps)
-            }
-            ctx.ensureActive()
-            bmp
         }, { preview = it })
     }
 
@@ -1956,7 +1976,7 @@ private fun AboutDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("PhotoCraft Express 0.2.4") },
+        title = { Text("PhotoCraft Express 0.2.5") },
         text = {
             Text(
                 "A photo editor with an original codebase and hand-drawn icons. " +

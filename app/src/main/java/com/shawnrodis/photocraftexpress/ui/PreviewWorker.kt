@@ -1,6 +1,7 @@
 package com.shawnrodis.photocraftexpress.ui
 
 import com.shawnrodis.photocraftexpress.engine.EditState
+import com.shawnrodis.photocraftexpress.engine.PixelImage
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -13,8 +14,24 @@ data class PreviewRequest(
     val analysis: FaceAnalysis.Result?,
     val insertedBitmaps: Map<String, android.graphics.Bitmap>,
     val applyCrop: Boolean,
-    val tool: EditorTool
+    val tool: EditorTool,
+    /**
+     * Pixel base this request renders from (v0.2.5): the full 1024px base,
+     * or the cached 512px drag base while a drag is in flight. Carrying
+     * the base in the request (rather than reading it at render time)
+     * pins the quality level current at offer time.
+     */
+    val base: PixelImage
 )
+
+/**
+ * Drag-time preview base selection (v0.2.5 lag fix): while a drag is in
+ * flight (draft != null) the worker renders the cached 512px base and
+ * swaps back to the full 1024px base on release. Pure function so the
+ * selection is unit-testable without Compose.
+ */
+fun selectPreviewBase(dragging: Boolean, fullBase: PixelImage, dragBase: PixelImage): PixelImage =
+    if (dragging) dragBase else fullBase
 
 /**
  * Sequential latest-wins render loop (v0.2.2 live-slider fix).

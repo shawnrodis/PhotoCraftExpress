@@ -7,6 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.pow
 
 class AdjustMathTest {
 
@@ -116,7 +117,7 @@ class AdjustMathTest {
     @Test
     fun vibrance_greyPixelUnchanged() {
         val out = FloatArray(3)
-        AdjustMath.vibranceLin(0.4f, 0.4f, 0.4f, 0.9f, out)
+        AdjustMath.vibranceLin(0.4f, 0.4f, 0.4f, 0.9f, 0.64f * 0.9f.toDouble().pow(1.6).toFloat(), out)
         assertEquals(0.4f, out[0], 1e-6f)
         assertEquals(0.4f, out[1], 1e-6f)
         assertEquals(0.4f, out[2], 1e-6f)
@@ -125,12 +126,13 @@ class AdjustMathTest {
     @Test
     fun vibrance_boostsMutedColour_dampsWhenNegative() {
         val out = FloatArray(3)
-        AdjustMath.vibranceLin(0.50f, 0.42f, 0.40f, 1f, out)
+        AdjustMath.vibranceLin(0.50f, 0.42f, 0.40f, 1f, 0.64f * 1f.toDouble().pow(1.6).toFloat(), out)
         val spreadIn = 0.50f - 0.40f
         val spreadOut = maxOf(out[0], out[1], out[2]) - minOf(out[0], out[1], out[2])
         assertTrue("positive vibrance widens channel spread", spreadOut > spreadIn)
 
-        AdjustMath.vibranceLin(0.50f, 0.42f, 0.40f, -1f, out)
+        // vPow is unread when v < 0 (negative branch); 0f documents that.
+        AdjustMath.vibranceLin(0.50f, 0.42f, 0.40f, -1f, 0f, out)
         val spreadNeg = maxOf(out[0], out[1], out[2]) - minOf(out[0], out[1], out[2])
         assertTrue("negative vibrance narrows channel spread", spreadNeg < spreadIn)
     }

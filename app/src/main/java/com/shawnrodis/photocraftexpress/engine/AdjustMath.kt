@@ -168,8 +168,14 @@ object AdjustMath {
      * behaviour with slightly different shadow weighting.
      *
      * Writes the result into [out] (r, g, b in 0..1).
+     *
+     * [vPow] is the loop-invariant `0.64f * v^1.6`, precomputed once per
+     * render by the caller (v0.2.5 lag fix: computing it per pixel cost a
+     * `pow` call per pixel). It must equal
+     * `0.64f * v.toDouble().pow(1.6).toFloat()` for the given v; it is
+     * only read when v > 0, so callers may pass 0f otherwise.
      */
-    fun vibranceLin(r: Float, g: Float, b: Float, v: Float, out: FloatArray) {
+    fun vibranceLin(r: Float, g: Float, b: Float, v: Float, vPow: Float, out: FloatArray) {
         val mx = max(r, max(g, b))
         val mn = min(r, min(g, b))
         if (mx <= 0f || mx - mn <= 1e-9f) {
@@ -189,7 +195,7 @@ object AdjustMath {
             val p = VIBRANCE_BOOST[2]; val q = VIBRANCE_BOOST[3]
             val r0 = VIBRANCE_BOOST[4]; val ra = VIBRANCE_BOOST[5]; val rt = VIBRANCE_BOOST[6]
             val w = vibranceSkin(hsvHue(r, g, b, mx, mn))
-            val a = v * (1f - w) + 0.64f * v.toDouble().pow(1.6).toFloat() * w
+            val a = v * (1f - w) + vPow * w
             val boost = (c0 * a + c1 * a * a) *
                 t.toDouble().pow(p.toDouble()).toFloat() *
                 (1f - t).toDouble().pow(q.toDouble()).toFloat() *

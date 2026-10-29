@@ -2,6 +2,7 @@ package com.shawnrodis.photocraftexpress.engine
 
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlinx.coroutines.CancellationException
 
 /** Pixels plus dimensions, the currency of the pure-Kotlin pipeline. */
@@ -463,6 +464,10 @@ object PixelPipeline {
         val bGain = 1f - 0.18f * tt
         val gGain = 1f - 0.14f * (tint / 100f)
         val vibV = vibrance / 100f
+        // v0.2.5 lag fix: v^1.6 is loop-invariant per render (vibV is
+        // constant across pixels) — compute once here instead of once per
+        // pixel. Only read when vibV > 0 (the negative branch never uses it).
+        val vibPow = if (vibV > 0f) 0.64f * vibV.toDouble().pow(1.6).toFloat() else 0f
         val satS = saturation / 100f
         val px = geo.pixels
         val out = IntArray(px.size)
@@ -487,7 +492,7 @@ object PixelPipeline {
                     rf *= rGain; gf *= gGain; bf *= bGain
                 }
                 if (vibV != 0f) {
-                    AdjustMath.vibranceLin(rf, gf, bf, vibV, vibBuf)
+                    AdjustMath.vibranceLin(rf, gf, bf, vibV, vibPow, vibBuf)
                     rf = vibBuf[0]; gf = vibBuf[1]; bf = vibBuf[2]
                 }
                 if (satS != 0f) {
