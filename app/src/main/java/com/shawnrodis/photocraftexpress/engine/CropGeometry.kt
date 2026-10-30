@@ -190,6 +190,21 @@ data class FitFrame(
     val dispH: Float
 )
 
+/**
+ * Displayed-frame pixel ratio (w/h) for the "Original" aspect lock:
+ * the source dims, swapped when the user rotated 90°/270° — the same
+ * frame onAspectSelected uses for its Original/Fixed rects, so the
+ * drag lock and the selection rect can never disagree. Returns 0f
+ * for degenerate dims (callers treat that as "no lock").
+ */
+fun originalPixelRatio(sourceW: Int, sourceH: Int, rotation: Int): Float {
+    if (sourceW <= 0 || sourceH <= 0) return 0f
+    val rotated = rotation == 90 || rotation == 270
+    val w = if (rotated) sourceH else sourceW
+    val h = if (rotated) sourceW else sourceH
+    return w.toFloat() / h
+}
+
 /** Fit frame of an [imageW] x [imageH] image inside a canvas box. */
 fun fitFrame(canvasW: Float, canvasH: Float, imageW: Int, imageH: Int): FitFrame {
     if (canvasW <= 0f || canvasH <= 0f || imageW <= 0 || imageH <= 0) {

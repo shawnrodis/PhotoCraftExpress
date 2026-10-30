@@ -148,9 +148,9 @@ object Exporter {
         if (bmp == null) return error ?: "Export failed."
         val name = exportFileName(format)
         return when (action) {
-            ExportAction.SAVE -> saveToGallery(context, bmp, format, quality, name)
-            ExportAction.SHARE -> shareImage(context, bmp, format, quality, name)
-            ExportAction.WALLPAPER -> setWallpaper(context, bmp, format, quality, name)
+            ExportAction.SAVE -> saveToGallery(context, bmp, format, quality, name, sourceUri)
+            ExportAction.SHARE -> shareImage(context, bmp, format, quality, name, sourceUri)
+            ExportAction.WALLPAPER -> setWallpaper(context, bmp, format, quality, name, sourceUri)
             ExportAction.PRINT -> "Print must run on the main thread."
         }
     }
@@ -203,7 +203,8 @@ object Exporter {
     }
 
     fun saveToGallery(
-        context: Context, bmp: Bitmap, format: ExportFormat, quality: Int, name: String
+        context: Context, bmp: Bitmap, format: ExportFormat, quality: Int, name: String,
+        sourceUri: Uri
     ): String {
         return try {
             if (Build.VERSION.SDK_INT >= 29) {
@@ -218,6 +219,11 @@ object Exporter {
                 ) ?: return "Save failed: MediaStore refused the image."
                 context.contentResolver.openOutputStream(uri)?.use { out ->
                     bmp.compress(format.compressFormat, quality, out)
+                }
+                // v0.2.6: EXIF goes on BEFORE clearing IS_PENDING, so the
+                // gallery scan picks up the metadata with the file.
+                if (format == ExportFormat.JPEG) {
+                    ExifCopy.copyToOutputUri(context, sourceUri, uri, bmp.width, bmp.height)
                 }
                 values.clear()
                 values.put(MediaStore.Images.Media.IS_PENDING, 0)
@@ -234,6 +240,10 @@ object Exporter {
                 file.outputStream().use { out ->
                     bmp.compress(format.compressFormat, quality, out)
                 }
+                // v0.2.6: EXIF goes on before the media scan, same reason.
+                if (format == ExportFormat.JPEG) {
+                    ExifCopy.copyFromUri(context, sourceUri, file, bmp.width, bmp.height)
+                }
                 MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf(format.mime), null)
                 "Saved to Pictures/PhotoCraftExpress"
             }
@@ -243,21 +253,27 @@ object Exporter {
     }
 
     private fun stageFile(
-        context: Context, bmp: Bitmap, format: ExportFormat, quality: Int, name: String
+        context: Context, bmp: Bitmap, format: ExportFormat, quality: Int, name: String,
+        sourceUri: Uri
     ): File {
         val dir = File(context.cacheDir, "exports").apply { mkdirs() }
         val file = File(dir, name)
         file.outputStream().use { out ->
             bmp.compress(format.compressFormat, quality, out)
         }
+        // v0.2.6: staged share/wallpaper files carry EXIF too.
+        if (format == ExportFormat.JPEG) {
+            ExifCopy.copyFromUri(context, sourceUri, file, bmp.width, bmp.height)
+        }
         return file
     }
 
     fun shareImage(
-        context: Context, bmp: Bitmap, format: ExportFormat, quality: Int, name: String
+        context: Context, bmp: Bitmap, format: ExportFormat, quality: Int, name: String,
+        sourceUri: Uri
     ): String {
         return try {
-            val file = stageFile(context, bmp, format, quality, name)
+            val file = stageFile(context, bmp, format, quality, name, sourceUri)
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
             val intent = Intent(Intent.ACTION_SEND).apply {
                 type = format.mime
@@ -274,10 +290,11 @@ object Exporter {
     }
 
     fun setWallpaper(
-        context: Context, bmp: Bitmap, format: ExportFormat, quality: Int, name: String
+        context: Context, bmp: Bitmap, format: ExportFormat, quality: Int, name: String,
+        sourceUri: Uri
     ): String {
         return try {
-            val file = stageFile(context, bmp, format, quality, name)
+            val file = stageFile(context, bmp, format, quality, name, sourceUri)
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
             val intent = Intent(Intent.ACTION_ATTACH_DATA).apply {
                 setDataAndType(uri, format.mime)

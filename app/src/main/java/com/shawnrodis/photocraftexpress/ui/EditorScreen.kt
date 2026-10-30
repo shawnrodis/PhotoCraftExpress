@@ -105,6 +105,7 @@ import com.shawnrodis.photocraftexpress.engine.CropGeometry
 import com.shawnrodis.photocraftexpress.engine.CropRect
 import com.shawnrodis.photocraftexpress.engine.cropHandleAt
 import com.shawnrodis.photocraftexpress.engine.fitFrame
+import com.shawnrodis.photocraftexpress.engine.originalPixelRatio
 import com.shawnrodis.photocraftexpress.engine.fractionToNorm
 import com.shawnrodis.photocraftexpress.engine.DrawStroke
 import com.shawnrodis.photocraftexpress.engine.EditHistory
@@ -766,7 +767,17 @@ fun EditorScreen(
     /** Aspect lock in normalized units, or null for free crops. */
     fun cropAspectNorm(): Float? {
         val pv = preview ?: return null
-        val ratio = (aspectSel as? AspectSel.Fixed)?.ratio ?: return null
+        // v0.2.6: Original used to fall through to null here (only
+        // Fixed returned a ratio), so Original drags were unconstrained
+        // — exactly Free. Original now resolves to the displayed photo's
+        // own ratio; Free still returns null (unconstrained).
+        val ratio = when (val sel = aspectSel) {
+            is AspectSel.Fixed -> sel.ratio
+            AspectSel.Original -> originalPixelRatio(
+                sourceBitmap.width, sourceBitmap.height, cur.rotation
+            ).takeIf { it > 0f } ?: return null
+            AspectSel.Free -> return null
+        }
         if (canvasSize.width <= 0 || canvasSize.height <= 0) return ratio
         val fit = fitFrame(
             canvasSize.width.toFloat(), canvasSize.height.toFloat(),
@@ -1976,7 +1987,7 @@ private fun AboutDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("PhotoCraft Express 0.2.5") },
+        title = { Text("PhotoCraft Express 0.2.6") },
         text = {
             Text(
                 "A photo editor with an original codebase and hand-drawn icons. " +
