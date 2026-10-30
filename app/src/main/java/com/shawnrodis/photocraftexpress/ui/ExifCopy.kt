@@ -12,6 +12,12 @@ import java.io.File
  * EXIF onto the exported JPEG, with two deliberate overrides — see
  * [copyAttributes]. JPEG only: ExifInterface write support is a JPEG
  * story, so PNG exports skip this step rather than forcing it.
+ *
+ * v0.2.7: GPS was the one tag that still didn't land, because Android
+ * 10+ redacts location from content:// reads without
+ * ACCESS_MEDIA_LOCATION + MediaStore.setRequireOriginal() — see
+ * [openSourceStream]. MakerNote joined the copy list (lens identity),
+ * and the tag list gained its audit additions.
  */
 object ExifCopy {
 
@@ -34,11 +40,31 @@ object ExifCopy {
         ExifInterface.TAG_GPS_TIMESTAMP,
         ExifInterface.TAG_GPS_DATESTAMP,
         ExifInterface.TAG_GPS_PROCESSING_METHOD,
+        // v0.2.7 audit: completeness for the GPS fix.
+        ExifInterface.TAG_GPS_SATELLITES,
+        ExifInterface.TAG_GPS_MEASURE_MODE,
+        ExifInterface.TAG_GPS_DOP,
         // Camera / lens.
         ExifInterface.TAG_MAKE,
         ExifInterface.TAG_MODEL,
         ExifInterface.TAG_LENS_MAKE,
         ExifInterface.TAG_LENS_MODEL,
+        // v0.2.7: MakerNote is copied after all. v0.2.6 excluded it as a
+        // "device-private blob", but lens identity lives in it on some
+        // phones (the missing "Wide-angle lens" line is the evidence),
+        // and viewers treat it as opaque — a stale blob is harmless,
+        // while a missing one loses the lens line. Copied verbatim
+        // like every other tag; see the caveat in the v0.2.7 report
+        // about binary blobs and string round-trips.
+        ExifInterface.TAG_MAKER_NOTE,
+        // v0.2.7 audit: capture-relevant tags the v0.2.6 list missed
+        // that actually survive a save round-trip (probe-verified).
+        // Deliberately NOT listed: LENS_SERIAL_NUMBER,
+        // DIGITAL_ZOOM_RATIO, SUBJECT_DISTANCE — the constants exist
+        // but ExifInterface 1.3.7 silently drops them on save, so
+        // listing them would be dead weight that looks like coverage.
+        ExifInterface.TAG_BODY_SERIAL_NUMBER,
+        ExifInterface.TAG_IMAGE_UNIQUE_ID,
         ExifInterface.TAG_IMAGE_DESCRIPTION,
         // Exposure.
         ExifInterface.TAG_FOCAL_LENGTH,
@@ -57,6 +83,8 @@ object ExifCopy {
         ExifInterface.TAG_CONTRAST,
         ExifInterface.TAG_SATURATION,
         ExifInterface.TAG_SHARPNESS,
+        // (DIGITAL_ZOOM_RATIO / SUBJECT_DISTANCE audited and dropped:
+        // see the LENS_SERIAL_NUMBER note above.)
         ExifInterface.TAG_COLOR_SPACE,
         ExifInterface.TAG_SENSING_METHOD,
         ExifInterface.TAG_CUSTOM_RENDERED,
@@ -85,11 +113,49 @@ object ExifCopy {
         }
     }
 
+    /**
+     * Opens the source photo's bytes for metadata reads. v0.2.7: on
+     * Android 10+, GPS is REDACTED from content:// reads unless the app
+     * holds ACCESS_MEDIA_LOCATION and reads through the original URI —
+     * that redaction is exactly why v0.2.6 exports kept every tag
+     * except the map pin. So for content URIs on API 29+, the original
+     * URI is tried first; any failure (no permission, non-MediaStore
+     * provider, anything else) falls back to the plain stream, which
+     * still yields every tag except GPS. Never throws: null means
+     * "read it some other way or skip metadata", never "fail export".
+     * Callers close the returned stream. Internal so XmpCopy (same
+     * package) can read the source bytes through the same path.
+     */
+    internal fun openSourceStream(context: Context, sourceUri: Uri): java.io.InputStream? {
+        if (android.os.Build.VERSION.SDK_INT >= 29 && sourceUri.scheme == "content") {
+            try {
+                val original = android.provider.MediaStore.setRequireOriginal(sourceUri)
+                val stream = context.contentResolver.openInputStream(original)
+                if (stream != null) return stream
+            } catch (_: Exception) {
+                // Fall through to the plain (GPS-redacted) read.
+            }
+        }
+        return try {
+            context.contentResolver.openInputStream(sourceUri)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Reads the source's EXIF through [openSourceStream], or null. */
+    private fun openSourceExif(context: Context, sourceUri: Uri): ExifInterface? {
+        return try {
+            openSourceStream(context, sourceUri)?.use { ExifInterface(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** Same, but the source is a content:// URI (the editor's photo). */
     fun copyFromUri(context: Context, sourceUri: Uri, destFile: File, exportW: Int, exportH: Int) {
         try {
-            val src = context.contentResolver.openInputStream(sourceUri)?.use { ExifInterface(it) }
-                ?: return
+            val src = openSourceExif(context, sourceUri) ?: return
             val dst = ExifInterface(destFile.absolutePath)
             copyAttributes(src, dst, exportW, exportH)
             dst.saveAttributes()
@@ -98,11 +164,19 @@ object ExifCopy {
         }
     }
 
-    /** Same, but the destination is a MediaStore URI (SDK 29+ save path). */
+    /**
+     * Same, but the destination is a MediaStore URI (SDK 29+ save path).
+     * Note on testability: ExifInterface only saves through a
+     * FileDescriptor it proves seekable (Os.lseek), which is true of
+     * ParcelFileDescriptor FDs on device — v0.2.6 field evidence
+     * (EXIF present on saved exports) confirms it — but on the JVM
+     * the Os call is a stub, so no JVM test can execute this path.
+     * The shared copyAttributes logic IS unit-tested via the File
+     * path; this FD plumbing itself is field-gated.
+     */
     fun copyToOutputUri(context: Context, sourceUri: Uri, outputUri: Uri, exportW: Int, exportH: Int) {
         try {
-            val src = context.contentResolver.openInputStream(sourceUri)?.use { ExifInterface(it) }
-                ?: return
+            val src = openSourceExif(context, sourceUri) ?: return
             context.contentResolver.openFileDescriptor(outputUri, "rw")?.use { pfd ->
                 val dst = ExifInterface(pfd.fileDescriptor)
                 copyAttributes(src, dst, exportW, exportH)
@@ -117,8 +191,8 @@ object ExifCopy {
      * The tag transfer itself, shared by every destination shape so the
      * unit tests cover the real logic. Deliberately NOT copied:
      * SOFTWARE (the file is an edited export, not the camera's output),
-     * MAKER_NOTE (a device-private blob, stale after editing),
-     * USER_COMMENT (free text, not capture metadata).
+     * USER_COMMENT (free text, not capture metadata). MakerNote IS
+     * copied since v0.2.7 (see the tag list comment).
      */
     fun copyAttributes(src: ExifInterface, dst: ExifInterface, exportW: Int, exportH: Int) {
         for (tag in COPIED_TAGS) {

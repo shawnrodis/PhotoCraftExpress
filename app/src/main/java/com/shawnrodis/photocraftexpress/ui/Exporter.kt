@@ -222,8 +222,11 @@ object Exporter {
                 }
                 // v0.2.6: EXIF goes on BEFORE clearing IS_PENDING, so the
                 // gallery scan picks up the metadata with the file.
+                // v0.2.7: XMP goes on AFTER the ExifInterface step, so no
+                // later rewrite can drop it.
                 if (format == ExportFormat.JPEG) {
                     ExifCopy.copyToOutputUri(context, sourceUri, uri, bmp.width, bmp.height)
+                    XmpCopy.copyXmpToOutputUri(context, sourceUri, uri)
                 }
                 values.clear()
                 values.put(MediaStore.Images.Media.IS_PENDING, 0)
@@ -241,8 +244,10 @@ object Exporter {
                     bmp.compress(format.compressFormat, quality, out)
                 }
                 // v0.2.6: EXIF goes on before the media scan, same reason.
+                // v0.2.7: XMP after EXIF, same reason as above.
                 if (format == ExportFormat.JPEG) {
                     ExifCopy.copyFromUri(context, sourceUri, file, bmp.width, bmp.height)
+                    XmpCopy.copyXmpToFile(context, sourceUri, file)
                 }
                 MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf(format.mime), null)
                 "Saved to Pictures/PhotoCraftExpress"
@@ -262,8 +267,10 @@ object Exporter {
             bmp.compress(format.compressFormat, quality, out)
         }
         // v0.2.6: staged share/wallpaper files carry EXIF too.
+        // v0.2.7: XMP after EXIF, same reason as above.
         if (format == ExportFormat.JPEG) {
             ExifCopy.copyFromUri(context, sourceUri, file, bmp.width, bmp.height)
+            XmpCopy.copyXmpToFile(context, sourceUri, file)
         }
         return file
     }

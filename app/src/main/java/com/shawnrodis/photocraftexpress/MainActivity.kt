@@ -96,6 +96,17 @@ private fun mediaPermission(): String =
 private fun hasMediaPermission(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, mediaPermission()) == PackageManager.PERMISSION_GRANTED
 
+// v0.2.7: GPS EXIF is redacted from content:// reads on API 29+ unless
+// the app holds ACCESS_MEDIA_LOCATION (a dangerous permission, so it
+// needs a runtime request like the media permission).
+private fun locationPermission(): String? =
+    if (Build.VERSION.SDK_INT >= 29) Manifest.permission.ACCESS_MEDIA_LOCATION else null
+
+private fun hasLocationPermission(context: Context): Boolean =
+    locationPermission()?.let {
+        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+    } ?: true
+
 @Composable
 private fun AppRoot() {
     val context = LocalContext.current
@@ -138,6 +149,20 @@ private fun AppRoot() {
     ) { granted -> permissionGranted = granted }
     LaunchedEffect(Unit) {
         if (!permissionGranted) permissionLauncher.launch(mediaPermission())
+    }
+
+    // v0.2.7: ask for the location permission once at startup, same
+    // pattern as the media permission. The result is intentionally not
+    // stored in state: exports check it at read time, and a denial
+    // simply means GPS is left out of the export (everything else
+    // still copies). A denial re-asks on the next cold start unless
+    // the user chose "don't ask again", which the system then honors.
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* no state: read at export time */ }
+    LaunchedEffect(Unit) {
+        val loc = locationPermission()
+        if (loc != null && !hasLocationPermission(context)) locationPermissionLauncher.launch(loc)
     }
 
     var photos by remember { mutableStateOf<List<PhotoItem>>(emptyList()) }
